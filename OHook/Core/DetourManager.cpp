@@ -1,12 +1,12 @@
 #include "DetourManager.h"
-#include "Misc/SDKExt.h"
+#include "SDKExt.h"
 
 #include <bit>
 
 void DetourManager::ProcessEventDetour(const UObject* Context, UFunction* Function, void* Parms) {
     for (const auto& [first, second] : PreFunctionListeners) {
         if (Function == first) {
-            for (const auto Callback : second) {
+            for (const auto& Callback : second) {
                 Callback(Context, Function, Parms);
             }
         }
@@ -14,7 +14,7 @@ void DetourManager::ProcessEventDetour(const UObject* Context, UFunction* Functi
     MainProcessEvent(Context, Function, Parms);
     for (const auto& [first, second] : PostFunctionListeners) {
         if (Function == first) {
-            for (const auto Callback : second) {
+            for (const auto& Callback : second) {
                 Callback(Context, Function, Parms);
             }
         }
@@ -25,15 +25,22 @@ void DetourManager::AddInstance(UObject* Instance) {
     if (!Instance) return;
     if (InstanceProcessEventDetours.contains(Instance)) return;
     if (!MainProcessEvent) {
-        MainProcessEvent = reinterpret_cast<ProcessEventCallback*>(reinterpret_cast<uintptr_t>(GetModuleHandle(nullptr)) + Offsets::ProcessEvent);
+        if (Offsets::ProcessEvent == 0) {
+            // the very first object's PE is the primary one
+            const auto Object = UObject::GObjects->GetByIndex(0);
+            const void** VFT = *reinterpret_cast<const void***>(Object);
+            MainProcessEvent = reinterpret_cast<ProcessEventCallback*>(VFT[Offsets::ProcessEventIdx]);
+        } else {
+            MainProcessEvent = reinterpret_cast<ProcessEventCallback*>(reinterpret_cast<uintptr_t>(GetModuleHandle(nullptr)) + Offsets::ProcessEvent);
+        }
     }
     std::cout << "~~~ Adding PE Detour: " << Instance->GetName() << " ~~~\n";
     const void** Vtable = *static_cast<const void***>(static_cast<void*>(Instance));
-    auto OrigPtr = reinterpret_cast<ProcessEventCallback*>(VTableHook(Vtable, Offsets::ProcessEventIdx, static_cast<void*>(&ProcessEventDetour)));
+    auto OrigPtr = reinterpret_cast<ProcessEventCallback*>(VFTableHook(Vtable, Offsets::ProcessEventIdx, static_cast<void*>(&ProcessEventDetour)));
     InstanceProcessEventDetours.emplace(Instance, OrigPtr);
 };
 
-const void* DetourManager::VTableHook(const void** vtable, const int index, const void* hook) {
+const void* DetourManager::VFTableHook(const void** vtable, const int index, const void* hook) {
 	DWORD old_protect;
 	VirtualProtect(&vtable[index], sizeof(void*), PAGE_READWRITE, &old_protect);
 	const auto* orig = vtable[index];
@@ -45,7 +52,7 @@ const void* DetourManager::VTableHook(const void** vtable, const int index, cons
 void DetourManager::RemoveInstances() {
     for (auto [fst, snd] : InstanceProcessEventDetours) {
         const void** Vtable = *static_cast<const void***>(static_cast<void*>(fst));
-        VTableHook(Vtable, Offsets::ProcessEventIdx, snd);
+        VFTableHook(Vtable, Offsets::ProcessEventIdx, snd);
     }
     InstanceProcessEventDetours.clear();
 }

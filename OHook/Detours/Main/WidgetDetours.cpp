@@ -1,9 +1,10 @@
-#include "Detours/Main/WidgetDetours.h"
-#include "Core/Configuration.h"
-#include "Core/DetourManager.h"
-#include "Core/Handlers/WidgetHandler.h"
-#include "Misc/SDKExt.h"
-#include "Misc/Utils.h"
+#include "WidgetDetours.h"
+#include "Configuration.h"
+#include "DetourManager.h"
+#include "WidgetHandler.h"
+#include "ActorHandler.h"
+#include "SDKExt.h"
+#include "Utils.h"
 #include <format>
 
 #include <SDK/S6UICore_parameters.hpp>
@@ -13,10 +14,8 @@
 #include <SDK/WBP_Template_Button_Secondary_01_CM_parameters.hpp>
 #include <SDK/BPFL_UiHelpers_parameters.hpp>
 
-#include "Detours/Main/ToolBrickerDetours.h"
-
 #ifdef ENABLE_SUPPORTER_FEATURES
-#include "Detours/Supporters/Entitlements/OutfitsDetours.h"
+#include "../../Detours/Supporters/Entitlements/OutfitsDetours.h"
 #endif
 
 using namespace SDK;
@@ -40,12 +39,15 @@ void WidgetDetours::ReceiveDrawHUD(const UObject* Context, UFunction* Function, 
         if (WidgetHandler::ActiveWidgetType == EWidgetType::ReportPlayer) {
             Func_NoSnitches();
         }
-        auto MainWidget = static_cast<UWBP_MainWidget_CM_C*>(WidgetHandler::GameplayUIManager->GetCurrentStateWidget());
-        if (MainWidget && MainWidget->CurrentMainHUDState.bSocialPanelOpened && Configuration::bEnableRequestMods) {
-            if (IsValidPtr(MainWidget->WBP_SocialWindow_CM) && IsValidPtr(MainWidget->WBP_SocialWindow_CM->WBP_RequestsPanel_CM)) {
-                Func_RequestsPanelMod(MainWidget->WBP_SocialWindow_CM->WBP_RequestsPanel_CM);
+        if (auto CurrentStateWidget = WidgetHandler::GameplayUIManager->GetCurrentStateWidget(); CurrentStateWidget->IsValidLowLevel() && CurrentStateWidget->bIsActive && CurrentStateWidget->IsA(ActorHandler::ClassLookup(L"Palia/Content/UI/HUD/WBP_MainWidget_CM.WBP_MainWidget_CM"))) {
+            auto MainWidget = static_cast<UWBP_MainWidget_CM_C*>(CurrentStateWidget);
+            if (MainWidget && MainWidget->CurrentMainHUDState.bSocialPanelOpened && Configuration::bEnableRequestMods) {
+                if ((IsValidPtr(MainWidget->WBP_SocialWindow_CM) && MainWidget->WBP_SocialWindow_CM->IsValidLowLevel()) && IsValidPtr(MainWidget->WBP_SocialWindow_CM->WBP_RequestsPanel_CM)) {
+                    Func_RequestsPanelMod(MainWidget->WBP_SocialWindow_CM->WBP_RequestsPanel_CM);
+                }
             }
         }
+
     }
 }
 
@@ -81,7 +83,7 @@ void WidgetDetours::Func_RequestsPanelMod(UWBP_RequestsPanel_CM_C* Panel) {
     if (!Panel || !Panel->IsValidLowLevel()) return;
     TArray<UUserWidget*> FoundWidgets;
     TSubclassOf<UUserWidget> WidgetClass = UWBP_ListEntry_Request_CM_C::StaticClass();
-    UWidgetBlueprintLibrary::GetAllWidgetsOfClass(GetWorld(), &FoundWidgets, WidgetClass, false);
+    UWidgetBlueprintLibrary::GetAllWidgetsOfClass(UWorld::GetWorld(), &FoundWidgets, WidgetClass, false);
 
     for (auto Widget : FoundWidgets) {
         auto RequestEntry = static_cast<UWBP_ListEntry_Request_CM_C*>(Widget);

@@ -8,12 +8,7 @@
 *.user
 *.userosscache
 *.sln.docstates
-PaliaSDK/NameCollisions.inl
-PaliaSDK/PropertyFixup.hpp
-PaliaSDK/SDK.hpp
-PaliaSDK/UnrealContainers.hpp
-PaliaSDK/UnrealContainers.cpp
-PaliaSDK/SDK/*
+# PaliaSDK/*
 out/
 build/
 lib/

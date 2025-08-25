@@ -1,9 +1,9 @@
 #include "FishingDetours.h"
-#include "Core/Configuration.h"
-#include "Core/DetourManager.h"
-#include "Overlay/PaliaOverlay.h"
-#include "Misc/SDKExt.h"
-#include "Misc/Utils.h"
+#include "Configuration.h"
+#include "DetourManager.h"
+#include "PaliaOverlay.h"
+#include "SDKExt.h"
+#include "Utils.h"
 
 #include "functional"
 #include <sstream>
@@ -18,7 +18,7 @@ void FishingDetours::SetupDetours(AValeriaCharacter* VC, AValeriaPlayerControlle
 	DetourManager::AddFunctionListener("Function Engine.Actor.ReceiveTick", &Func_DoFastAutoFishing, nullptr);
     DetourManager::AddInstance(VC->GetFishing());
     DetourManager::AddFunctionListener("Function Palia.FishingComponent.RpcServer_SelectLoot", &Func_DoFishingCaptureOverride, nullptr);
-    DetourManager::AddFunctionListener("Function Palia.FishingComponent.RpcClient_StartFishingAt_Deprecated", &Func_DoInstantCatch, nullptr);
+    DetourManager::AddFunctionListener("Function Palia.FishingComponent.RpcClient_StartFishingFor", &Func_DoInstantCatch, nullptr);
     DetourManager::AddFunctionListener("Function Palia.FishingComponent.RpcServer_EndFishing", &Func_EndFishingDetoured, nullptr);
     DetourManager::AddFunctionListener("Function Palia.FishingComponent.RpcClient_FishCaught", &Func_DoFishingCleanup, nullptr);
 }
@@ -69,7 +69,7 @@ void FishingDetours::Func_DoFastAutoFishing(const UObject* Context, UFunction* F
     if (!bEnableAutoFishing)
         return;
 
-    if (Configuration::bRequireClickFishing ? !Menu::bShowMenu && IsGameWindowActive() && IsKeyHeld(VK_LBUTTON) : true) {
+    if (Configuration::bRequireClickFishing ? IsGameWindowActive() && FENTRY_IsKeyHeld(VK_LBUTTON) : true) {
         auto ValeriaCharacter = GetValeriaCharacter();
         if (!ValeriaCharacter)
             return;
@@ -130,14 +130,23 @@ void FishingDetours::Func_DoFishingCleanup(const UObject* Context, UFunction* Fu
 
 void FishingDetours::Func_DoFishingCaptureOverride(const UObject* Context, UFunction* Function, void* Parms) {
     auto SelectLoot = static_cast<Params::FishingComponent_RpcServer_SelectLoot*>(Parms);
-
-    if (bCaptureFishingSpot) {
-        memcpy(&sOverrideFishingSpot, &SelectLoot->RPCLootParams.WaterType_Deprecated, sizeof(FName));
-        bCaptureFishingSpot = false;
-    }
     if (bOverrideFishingSpot) {
-        memcpy(&SelectLoot->RPCLootParams.WaterType_Deprecated, &sOverrideFishingSpot, sizeof(FName));
+        if (OverrideFishingSpot == "") {
+            return;
+        }
+        if (!bFishingSpotsLoaded) {
+            LoadFishingSpots();
+        }
+        if (FishingSpotMap.contains(OverrideFishingSpot)) {
+            auto WaterBody = FishingSpotMap.at(OverrideFishingSpot);
+            SelectLoot->RPCLootParams.WaterBodyConfigPath = WaterBody;
+        }
     }
+
+    auto WaterBody = SelectLoot->RPCLootParams.WaterBodyConfigPath;
+    std::cout << "\n    Waterbody:\nAssetName: " << WaterBody.AssetPath.AssetName.ToString() << "\nPackageName: " << WaterBody.AssetPath.PackageName.ToString() << "\n";
+    auto BaitItem = SelectLoot->RPCLootParams.BaitItemTypePath;
+    std::cout << "\n    BaitItem:\nAssetName: " << BaitItem.AssetPath.AssetName.ToString() << "\nPackageName: " << BaitItem.AssetPath.PackageName.ToString() << "\n";
 }
 
 void FishingDetours::Func_EndFishingDetoured(const UObject* Context, UFunction* Function, void* Parms) {
@@ -153,9 +162,32 @@ void FishingDetours::Func_EndFishingDetoured(const UObject* Context, UFunction* 
 
     EndFishing->Context.Perfect = Configuration::bFishingPerfectCatch ? true : Configuration::bFishingInstantCatch ? false : EndFishing->Context.Perfect;
     EndFishing->Context.SourceWaterBody = nullptr;
-    EndFishing->Context.bUsedMultiplayerHelp = Configuration::bFishingMultiplayerHelp;
     EndFishing->Context.StartRodHealth = 100.0f;
     EndFishing->Context.EndRodHealth = 100.0f;
     EndFishing->Context.StartFishHealth = 100.0f;
     EndFishing->Context.EndFishHealth = 100.0f;
+    if (Configuration::bFishingMultiplayerHelp) {
+        EndFishing->Context.bUsedMultiplayerHelp = true;
+    }
+}
+
+void FishingDetours::LoadFishingSpots() {
+    auto ClassPath = UKismetSystemLibrary::GetClassTopLevelAssetPath(UFishMinigameWaterBodyConfig::StaticClass());
+    auto AssetRegistry = UAssetRegistryHelpers::GetAssetRegistry().GetObjectRef();
+    if (AssetRegistry && AssetRegistry->IsValidLowLevel()) {
+        UFunction* GetAssetsByClass = UObject::FindObject<UFunction>("Function AssetRegistry.AssetRegistry.GetAssetsByClass");
+        if (GetAssetsByClass) {
+            Params::AssetRegistry_GetAssetsByClass Parms{};
+            Parms.ClassPathName = ClassPath;
+            Parms.bSearchSubClasses = false;
+            AssetRegistry->ProcessEvent(GetAssetsByClass, &Parms);
+            if (Parms.ReturnValue) {
+                for (auto& AssetData : Parms.OutAssetData) {
+                    auto PackageName = AssetData.PackageName.ToString();
+                    FishingSpotMap.insert({PackageName, UAssetRegistryHelpers::ToSoftObjectPath(AssetData)});
+                }
+                bFishingSpotsLoaded = true;
+            }
+        }
+    }
 }

@@ -33,7 +33,7 @@ private:
     static inline std::unordered_map<UFunction*, std::vector<FunctionCallback*>>PreFunctionCallbacks = {};
     static inline std::unordered_map<UFunction*, std::vector<FunctionCallback*>>PostFunctionCallbacks = {};
 
-    static const void* VTableHook(const void** vtable, const int index, const void* hook);
+    static const void* VFTableHook(const void** vtable, const int index, const void* hook);
     static ProcessEventCallback* MainProcessEvent;
 };
 

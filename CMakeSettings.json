@@ -2,7 +2,7 @@
   "configurations": [
     {
       "name": "x64-Debug",
-      "generator": "Visual Studio 17 2022 Win64",
+      "generator": "Ninja",
       "configurationType": "Debug",
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "buildRoot": "${projectDir}\\out\\build\\${name}",
@@ -18,14 +18,24 @@
         },
         {
           "name": "CMAKE_CXX_FLAGS_DEBUG",
-          "value": "/MD /Zi /Ob0 /Od /RTC1",
+          "value": "/MD /Zi /Ob0 /Od /RTC1 /std:c++latest",
           "type": "STRING"
+        },
+        {
+          "name": "CMAKE_CXX_STANDARD",
+          "value": "23",
+          "type": "STRING"
+        },
+        {
+          "name": "CMAKE_CXX_EXTENSIONS",
+          "value": "OFF",
+          "type": "BOOL"
         }
       ]
     },
     {
       "name": "x64-Release",
-      "generator": "Visual Studio 17 2022 Win64",
+      "generator": "Ninja",
       "configurationType": "Release",
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "buildRoot": "${projectDir}\\out\\build\\${name}",
@@ -36,13 +46,23 @@
       "variables": [
         {
           "name": "CMAKE_C_FLAGS_RELEASE",
-          "value": "/MD /O2 /Ob2 /DNDEBUG",
+          "value": "/MD /O2 /Ob2 /DNDEBUG /bigobj",
           "type": "STRING"
         },
         {
           "name": "CMAKE_CXX_FLAGS_RELEASE",
-          "value": "/MD /O2 /Ob2 /DNDEBUG",
+          "value": "/MD /O2 /Ob2 /DNDEBUG /std:c++latest /bigobj",
           "type": "STRING"
+        },
+        {
+          "name": "CMAKE_CXX_STANDARD",
+          "value": "23",
+          "type": "STRING"
+        },
+        {
+          "name": "CMAKE_CXX_EXTENSIONS",
+          "value": "OFF",
+          "type": "BOOL"
         }
       ]
     }

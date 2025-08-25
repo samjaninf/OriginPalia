@@ -14,6 +14,7 @@ public:
 
 private:
 	static void Func_IsAwareOfGiftingPreference(void* Context, void* TheStack, void* Result);
+	static void Func_IsAbleToGiftAtDifficulty(void* Context, void* TheStack, void* Result);
 
 	static bool InGiftLoop;
 	static bool WaitingForDialogue;

@@ -1,17 +1,28 @@
-#include "Core/Main.h"
-#include "Core/HotkeysManager.h"
-#include "Overlay/PaliaOverlay.h"
+#include "Main.h"
+#include "HotkeysManager.h"
+#include "PaliaOverlay.h"
 
-#include "console/console.hpp"
-#include "hooks/hooks.hpp"
+#include "console.hpp"
+#include "signatures.h"
 
 #include <Windows.h>
 #include <thread>
-#include <bit>
+#include <string>
 
-#include "MinHook.h"
+#ifdef ENABLE_SUPPORTER_FEATURES
+#include "SupporterFeatures.h"
+#endif
 
-#include "../PaliaSDK/SDK.hpp"
+#include "SDK.hpp"
+
+enum class ClientType {
+    STANDALONE,
+    STEAM,
+    UNKNOWN
+};
+
+ClientType DetectClientType();
+bool AutoOffsetGeneration();
 
 // Forward declaration
 DWORD WINAPI OnProcessAttach(LPVOID lpParam);
@@ -20,87 +31,123 @@ DWORD WINAPI OnProcessDetach(LPVOID lpParam);
 BOOL WINAPI DllMain(const HMODULE hModule, const DWORD fdwReason, const LPVOID lpReserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hModule);
-
         HANDLE hHandle = CreateThread(nullptr, 0, OnProcessAttach, hModule, 0, nullptr);
         if (hHandle != nullptr) {
             CloseHandle(hHandle);
         }
-    } else if (fdwReason == DLL_PROCESS_DETACH && !lpReserved) {
+    }
+    else if (fdwReason == DLL_PROCESS_DETACH && !lpReserved) {
         OnProcessDetach(nullptr);
     }
-
     return TRUE;
 }
 
 DWORD WINAPI OnProcessAttach(const LPVOID lpParam) {
     auto hModule = static_cast<HMODULE>(lpParam);
-	int32_t GMallocOffset = 0x089F16E0; // 0.183.0
 
-	// Steam Support
-	char fileName[MAX_PATH];
-	GetModuleFileName(nullptr, fileName, MAX_PATH);
-	if (const std::string filePath(fileName); filePath.find("PaliaClientSteam-Win64-Shipping.exe") != std::string::npos) {
-		Offsets::GObjects			= 0x08B419C0; // 0.183.0
-		Offsets::AppendString		= 0x00D03FC0; // 0.183.0
-		Offsets::GNames				= 0x08A9B000; // 0.183.0
-		Offsets::GWorld				= 0x08CB2408; // 0.183.0
-		Offsets::ProcessEvent		= 0x00EDDD10; // 0.183.0
-		Offsets::ProcessEventIdx	= 0x0000004D; // 0.183.0
-		GMallocOffset				= 0x08A60960; // 0.183.0
-	}
-    
-    const auto Overlay = new PaliaOverlay();
-    MenuBase::Instance = Overlay;
-
-    // Opens a console window (if enabled in console.hpp)
+    // Allocate Console
     Console::Alloc();
-    
-    // Initialize MinHook
-    if (MH_Initialize() != MH_OK) {
-        LOG("[!] MinHook initialization failed.\n");
+
+    // Generate Offsets
+    if (!AutoOffsetGeneration()) {
+        LOG("[!] Unable to auto generate offsets. Exiting.\n");
         FreeLibraryAndExitThread(hModule, 0);
     }
 
-#ifdef FORCE_BACKEND
-	static HMODULE d3d12 = GetModuleHandle("D3D12.dll");
-	static HMODULE d3d12core = GetModuleHandle("D3D12Core.dll");
-	static HMODULE d3dscache = GetModuleHandle("D3DSCache.dll");
-	static HMODULE d3d11 = GetModuleHandle("d3d11.dll");
-
-	LOG("[+] Forced Renderer logs: D3D12.dll: %s, D3D12Core.dll: %s, D3DSCache.dll: %s, d3d11.dll: %s\n",
-		d3d12 ? "[X]" : "[ ]",
-		d3d12core ? "[X]" : "[ ]",
-		d3dscache ? "[X]" : "[ ]",
-		d3d11 ? "[X]" : "[ ]");
-
-	LOG("[!] Manually forcing DX12.\n");
-	U::SetRenderingBackend(DIRECTX12);
-#else
-    std::thread findRenderer(H::FindRenderer);
-    findRenderer.join();
-
-    if (!H::FoundRenderer()) {
-        LOG("[!] Failed to find backend renderer. Exiting.\n");
-        FreeLibraryAndExitThread(hModule, 1);
-    }
-#endif
-
-    // Initialize FMemory
-    FMemory::FMalloc::UnrealStaticGMalloc = std::bit_cast<FMemory::FMalloc**>(InSDKUtils::GetImageBase() + GMallocOffset);
-    FMemory::GMalloc = *FMemory::FMalloc::UnrealStaticGMalloc;
-
-    H::Init();
+    const auto Overlay = new PaliaOverlay();
+    OverlayBase::Instance = Overlay;
+    Overlay->SetupOverlay();
 
     Main::Start();
-    
+
     return 0;
 }
 
 DWORD WINAPI OnProcessDetach(const LPVOID lpParam) {
     Main::Stop();
-    H::Free();
-    MH_Uninitialize();
-
     Console::Free();
     return 0;
+}
+
+ClientType DetectClientType() {
+    char processName[MAX_PATH];
+    DWORD size = GetModuleFileNameA(nullptr, processName, MAX_PATH);
+    
+    if (size == 0) {
+        LOG("[!] Failed to get process name\n");
+        return ClientType::UNKNOWN;
+    }
+
+    std::string processPath(processName);
+    size_t lastSlash = processPath.find_last_of("\\/");
+    std::string fileName = processPath.substr(lastSlash + 1);
+
+    LOG("[+] Detected process: %s\n", fileName.c_str());
+
+    if (fileName == "PaliaClient-Win64-Shipping.exe") {
+        LOG("[+] Client Type: STANDALONE\n");
+        return ClientType::STANDALONE;
+    }
+    else if (fileName == "PaliaClientSteam-Win64-Shipping.exe") {
+        LOG("[+] Client Type: STEAM\n");
+        return ClientType::STEAM;
+    }
+    else {
+        LOG("[!] Unknown client type: %s\n", fileName.c_str());
+        return ClientType::UNKNOWN;
+    }
+}
+
+bool AutoOffsetGeneration() {
+    // Detect client type and set appropriate offsets
+    ClientType clientType = DetectClientType();
+    
+    switch (clientType) {
+        case ClientType::STANDALONE:
+            LOG("[+] Setting STANDALONE client offsets\n");
+            SDK::Offsets::GObjects = 0x0AA4DDC0;
+            SDK::Offsets::AppendString = 0x011D4E30;
+            SDK::Offsets::GNames = 0x0A969F80;
+            SDK::Offsets::GWorld = 0x0ABCED08;
+            SDK::Offsets::ProcessEvent = 0x01421600;
+            SDK::Offsets::ProcessEventIdx = 0x0000004F;
+            break;
+            
+        case ClientType::STEAM:
+            LOG("[+] Setting STEAM client offsets\n");
+            SDK::Offsets::GObjects = 0x0AAC0040;
+            SDK::Offsets::AppendString = 0x011D5870;
+            SDK::Offsets::GNames = 0x0A9DC200;
+            SDK::Offsets::GWorld = 0x0AC40F88;
+            SDK::Offsets::ProcessEvent = 0x014222B0;
+            SDK::Offsets::ProcessEventIdx = 0x0000004F;
+            break;
+            
+        default:
+            LOG("[!] Unknown client type, using default STANDALONE offsets\n");
+            SDK::Offsets::GObjects = 0x0AA4DDC0;
+            SDK::Offsets::AppendString = 0x011D4E30;
+            SDK::Offsets::GNames = 0x0A969F80;
+            SDK::Offsets::GWorld = 0x0ABCED08;
+            SDK::Offsets::ProcessEvent = 0x01421600;
+            SDK::Offsets::ProcessEventIdx = 0x0000004F;
+            break;
+    }
+
+    auto OffsetPtrs = GenerateOffsets();
+    
+    if (OffsetPtrs.GMallocAddress == NULL) {
+        LOG("[!] Unable to find GMallocAddress. Exiting.\n");
+        return false;
+    }
+
+    // Initialize FMemory
+    FMemory::FMalloc::UnrealStaticGMalloc = reinterpret_cast<FMemory::FMalloc**>(OffsetPtrs.GMallocAddress);
+    FMemory::GMalloc = *FMemory::FMalloc::UnrealStaticGMalloc;
+
+    LOG("[+] Successfully initialized offsets for %s client\n", 
+        clientType == ClientType::STANDALONE ? "STANDALONE" : 
+        clientType == ClientType::STEAM ? "STEAM" : "UNKNOWN");
+
+    return true;
 }

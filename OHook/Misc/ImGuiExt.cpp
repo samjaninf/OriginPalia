@@ -44,7 +44,7 @@ void ImGui::ShowHotkeyMenu(const std::string& actionName, const std::vector<std:
 					Text("Key is already in use!");
 				}
 				else {
-					ImGui::InsertNotification({ImGuiToastType::Success, 2000, "Changed hotkey of '%s' to '%s'.", actionName.c_str(), GetHotkeyName(key).c_str()});
+					ImGui::InsertNotification({ ImGuiToastType::Success, 2000, "Changed hotkey of '%s' to '%s'.", actionName.c_str(), GetHotkeyName(key).c_str() });
 					selectedKey[actionName] = key;
 					waitingForKeyPress[actionName] = false;
 
@@ -66,7 +66,7 @@ void ImGui::ShowHotkeyMenu(const std::string& actionName, const std::vector<std:
 			HotkeysManager::SetHotkey(actionName, 0); // Set to none (0)
 			Configuration::Save(ESaveFile::HotkeySettings);
 			waitingForKeyPress[actionName] = false;
-			ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Cleared current hotkey."});
+			ImGui::InsertNotification({ ImGuiToastType::Info, 2000, "Cleared current hotkey." });
 			CloseCurrentPopup();
 		}
 
@@ -101,7 +101,7 @@ void ImGui::ShowHotkeyMenu(const std::string& actionName, const std::vector<std:
 				CloseCurrentPopup();
 			}
 		}
-		
+
 		EndPopup();
 	}
 
@@ -181,7 +181,7 @@ bool ImGui::Checkbox2(const char* label, bool* v, const std::vector<std::pair<st
 	actionName.erase(std::remove(actionName.begin(), actionName.end(), ' '), actionName.end());
 
 	std::string menuName = "Options Menu##" + actionName;
-	
+
 	ShowHotkeyMenu(actionName);
 
 	if (hovered && GetIO().MouseDown[1]) {
@@ -327,19 +327,19 @@ void ImGui::EndGroupPanel()
 	labelRect.Max.x += itemSpacing.x;
 	for (int i = 0; i < 4; ++i) {
 		switch (i) {
-		// left half-plane
+			// left half-plane
 		case 0:
 			PushClipRect(ImVec2(-FLT_MAX, -FLT_MAX), ImVec2(labelRect.Min.x, FLT_MAX), true);
 			break;
-		// right half-plane
+			// right half-plane
 		case 1:
 			PushClipRect(ImVec2(labelRect.Max.x, -FLT_MAX), ImVec2(FLT_MAX, FLT_MAX), true);
 			break;
-		// top
+			// top
 		case 2:
 			PushClipRect(ImVec2(labelRect.Min.x, -FLT_MAX), ImVec2(labelRect.Max.x, labelRect.Min.y), true);
 			break;
-		// bottom
+			// bottom
 		case 3:
 			PushClipRect(ImVec2(labelRect.Min.x, labelRect.Max.y), ImVec2(labelRect.Max.x, FLT_MAX), true);
 			break;

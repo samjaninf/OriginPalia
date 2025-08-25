@@ -22,7 +22,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 
-#include "fonts/fonts.h"
+#include <Fonts.h>
 
 /*
  * CONFIGURATION SECTION
@@ -499,7 +499,7 @@ namespace ImGui
             // Remove toast if expired
             if (currentToast->getPhase() == ImGuiToastPhase::Expired)
             {
-                RemoveNotification(i);
+                RemoveNotification(static_cast<int>(i));
                 continue;
             }
 
@@ -595,7 +595,11 @@ namespace ImGui
             {
                 currentToast->setWindowFlags(NOTIFY_DEFAULT_TOAST_FLAGS | ImGuiWindowFlags_NoInputs);
             }
-
+            
+            const ImVec2 textSize = CalcTextSize(content);
+            const ImVec2 maxSize = ImVec2(mainWindowSize.x / 3.f, textSize.y + NOTIFY_PADDING_Y * 2);
+            SetNextWindowSizeConstraints(ImVec2(0,0), ImVec2(maxSize.x, maxSize.y * 2));
+            
             Begin(windowName, nullptr, currentToast->getWindowFlags());
 
             // Render over all other windows
@@ -657,7 +661,7 @@ namespace ImGui
                     // If the button is pressed, we want to remove the notification
                     if (Button(ICON_FA_XMARK))
                     {
-                        RemoveNotification(i);
+                        RemoveNotification(static_cast<int>(i));
                     }
                 }
 
@@ -692,11 +696,10 @@ namespace ImGui
 
                 if (NOTIFY_USE_PROGRESS_BAR)
                 {
-                    // these cant be made a const, silly little Rider.
-                    float totalDuration = NOTIFY_FADE_IN_OUT_TIME + currentToast->getDismissTime() + NOTIFY_FADE_IN_OUT_TIME;
-                    float elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(currentToast->getElapsedTime()).count();
-                    float progress = elapsedTime / totalDuration;
-                    ProgressBar(progress, ImVec2(ImGui::CalcTextSize(currentToast->getContent()).x + NOTIFY_PADDING_X, 1.0f)); // Full width, 1.0f height
+                    const float totalDuration = NOTIFY_FADE_IN_OUT_TIME + currentToast->getDismissTime() + NOTIFY_FADE_IN_OUT_TIME;
+                    const float elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(currentToast->getElapsedTime()).count();
+                    const float progress = elapsedTime / totalDuration;
+                    ProgressBar(progress, ImVec2(GetWindowSize().x - NOTIFY_PADDING_X, 1.0f));
                 }
 
                 PopTextWrapPos();

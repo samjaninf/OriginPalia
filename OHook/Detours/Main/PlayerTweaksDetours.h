@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "Overlay/PaliaOverlay.h"
+#include "PaliaOverlay.h"
 #include <random>
 
 #include <SDK.hpp>
@@ -19,11 +19,11 @@ public:
     struct PlayerModsToggles {
         bool bUnlimitedWardrobeRespec;
         bool bInteractionsIncrease;
-        float bInteractionRadius;
+        float InteractionDistance;
         bool bAntiAFK;
         int maxJumpModValue;
 
-        PlayerModsToggles() : bUnlimitedWardrobeRespec(false), bInteractionsIncrease(false), bInteractionRadius(200.f), bAntiAFK(false), maxJumpModValue(1) {
+        PlayerModsToggles() : bUnlimitedWardrobeRespec(false), bInteractionsIncrease(false), InteractionDistance(200.f), bAntiAFK(false), maxJumpModValue(1) {
         }
     };
     static PlayerModsToggles PlayerModsToggle;
@@ -31,6 +31,7 @@ public:
     static void Func_DoCharacterTweaks(const UObject* Context, UFunction* Function, void* Parms);
     static void ResetTweaks(const UObject* Context, UFunction* Function, void* Parms);
     static void Func_DoGatherActors(const UObject* Context, UFunction* Function, void* Parms);
+    static void Func_PE_OnReplicatedAndNotify(const UObject* Context, UFunction* Function, void* Parms);
 };
 
 inline PlayerTweaksDetours::PlayerModsToggles PlayerTweaksDetours::PlayerModsToggle;

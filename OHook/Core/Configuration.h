@@ -1,13 +1,14 @@
 #pragma once
 
-#include "Core/Handlers/ActorHandler.h"
+#include "io/IOManager.h"
+#include "ActorHandler.h"
 #include <json/json.h>
 #include <imgui.h>
 #include <map>
 
 struct FCreatureType {
-	ECreatureKind Kind;
-	ECreatureQuality Quality;
+	FEntryHunting::TypeEnum Kind;
+	FEntryHunting::VariantEnum Quality;
 
 	bool operator<(const FCreatureType& other) const {
 		return std::tie(Kind, Quality) < std::tie(other.Kind, other.Quality);
@@ -15,8 +16,8 @@ struct FCreatureType {
 };
 
 struct FBugType {
-	EBugKind Kind;
-	EBugQuality Quality;
+	FEntryBug::TypeEnum Kind;
+	FEntryBug::VariantEnum Quality;
 	bool Starred = false;
 
 	bool operator<(const FBugType& other) const {
@@ -41,36 +42,43 @@ enum ESaveFile {
 // Forward declaration of PaliaOverlay class
 class PaliaOverlay;
 
-class Configuration final {
+class Configuration : public IOManager {
+// private:
 	static bool ConfigLoaded;
 
-	static void LoadOverlaySettings(std::ifstream& configStream);
-	static void LoadESPSettings(std::ifstream& configStream);
-	static void LoadAimSettings(std::ifstream& configStream);
-	static void LoadMovementSettings(std::ifstream& configStream);
-	static void LoadToolSkillsSettings(std::ifstream& configStream);
-	static void LoadSellItemsSettings(std::ifstream& configStream);
-	static void LoadModSettings(std::ifstream& configStream);
-	static void LoadCustomThemeSettings(std::ifstream& configStream);
-	static void LoadHotkeySettings(std::ifstream& configStream);
+	static bool LoadOverlaySettings(const std::string& filePath, Json::Value& config);
+	static bool LoadESPSettings(const std::string& filePath, Json::Value& config);
+	static bool LoadAimSettings(const std::string& filePath, Json::Value& config);
+	static bool LoadMovementSettings(const std::string& filePath, Json::Value& config);
+	static bool LoadToolSkillsSettings(const std::string& filePath, Json::Value& config);
+	static bool LoadSellItemsSettings(const std::string& filePath, Json::Value& config);
+	static bool LoadModSettings(const std::string& filePath, Json::Value& config);
+	static bool LoadCustomThemeSettings(const std::string& filePath, Json::Value& config);
+	static bool LoadHotkeySettings(const std::string& filePath, Json::Value& config);
 	
-	static void SaveOverlaySettings();
-	static void SaveESPSettings();
-	static void SaveAimSettings();
-	static void SaveMovementSettings();
-	static void SaveToolSkillsSettings();
-	static void SaveSellItemsSettings();
-	static void SaveModSettings();
-	static void SaveCustomThemeSettings();
-	static void SaveHotkeySettings();
+	static void SaveOverlaySettings(Json::Value& config);
+	static void SaveESPSettings(Json::Value& config);
+	static void SaveAimSettings(Json::Value& config);
+	static void SaveMovementSettings(Json::Value& config);
+	static void SaveToolSkillsSettings(Json::Value& config);
+	static void SaveSellItemsSettings(Json::Value& config);
+	static void SaveModSettings(Json::Value& config);
+	static void SaveCustomThemeSettings(Json::Value& config);
+	static void SaveHotkeySettings(Json::Value& config);
 	
 public:
+	Configuration() = default;
+	~Configuration() = default;
+
 	static void Load();
 	static void Save(ESaveFile save_file = ESaveFile::SAVE_ALL);
 	static void ApplyCustomTheme();
 	
 #pragma region ConfigVars
 
+	static bool ConfigIsCorrupt;
+	static std::vector<std::string> corruptConfigs;
+	
 	// ESP
 
 	static bool bEnableESP;
@@ -84,11 +92,11 @@ public:
 	#pragma region ESP
 
 	// ESP Colors
-	static std::map<EOreType, ImU32> OreColors;
+	static std::map<FEntryMining::TypeEnum, ImU32> OreColors;
 	static std::map<FCreatureType, ImU32> AnimalColors;
 	static std::map<EOneOffs, ImU32> SingleColors;
-	static std::map<ETreeType, ImU32> TreeColors;
-	static std::map<EForageableType, ImU32> ForageableColors;
+	static std::map<FEntryLumber::TypeEnum, ImU32> TreeColors;
+	static std::map<FEntryGatherable::TypeEnum, ImU32> ForageableColors;
 	static std::map<FBugType, ImU32> BugColors;
 
 #pragma endregion
@@ -109,6 +117,12 @@ public:
 	static bool bDoRadiusPlayersAvoidance;
 	static int TeleportPlayerAvoidanceRadius;
 	
+	// Classic Aimbot
+	static bool bEnableAimbot;
+	static float AimbotSmoothing;
+	static int AimbotKey;
+	static bool bAimbotOnlyAnimals;
+	
 
 	
 	// Movement
@@ -128,38 +142,56 @@ public:
 	// Tool Swinging
 	static bool bEnableAutoSwinging;
 	static bool bResourceAutoEquipTool;
+	static bool bAutoSwingingRequireESP;
+	static bool bAvoidSwingingLowDurability;
 	static bool bAvoidGroveChopping;
+	static bool bAvoidPlotSwinging;
+	static bool bAvoidSwingingNearPlayers;
+	static float SwingPlayerAvoidDistance;
 	
 	// Bug Catching
 	static bool bEnableBugCatching;
 	static bool bBugAutoEquipTool;
-	static bool bBugUseRandomDelay;
+	static bool bAutoCatchingRequireESP;
+	static bool bAvoidCatchingLowDurability;
 	static float BugCatchingDistance;
 	static int BugSpeedPreset;
 	static int BugCatchingDelay;
-
+	static bool bAvoidCatchingNearPlayers;
+	static float CatchingPlayerAvoidDistance;
+	
 	// Animal Hunting
 	static bool bEnableAnimalHunting;
 	static bool bAnimalAutoEquipTool;
-	static bool bAnimalUseRandomDelay;
+	static bool bAutoHuntingRequireESP;
+	static bool bAvoidHuntingLowDurability;
 	static float AnimalHuntingDistance;
 	static int AnimalSpeedPreset;
 	static int AnimalHuntingDelay;
+	static bool bAvoidHuntingNearPlayers;
+	static float HuntingPlayerAvoidDistance;
 
 	// Fishing Options
 	static bool bFishingNoDurability;
 	static bool bFishingMultiplayerHelp;
 	static bool bFishingInstantCatch;
 	static bool bFishingPerfectCatch;
-	static bool bFishingDiscard;
-	static bool bFishingOpenStoreWaterlogged;
 	static bool bRequireClickFishing;
 
 	// Others
 	static bool bEnableAutoGather;
 	static bool bEnableCookingMinigameSkip;
+	static bool bEnableAutoFocus;
+	static int FocusBelowPercent;
 
-
+	// Gardening
+	static bool bGardeningAutoHarvest;
+	static bool bGardeningAutoTill;
+	static bool bGardeningAutoWeed;
+	static bool bGardeningAutoFertilize;
+	static int GardeningFertilizerQty;
+	static bool bGardeningAutoReplant;
+	static bool bGardeningAutoWater;
 
 	// SellItems
 
@@ -167,6 +199,11 @@ public:
 	static bool bEnableBuyMultiplier;
 	static bool bEnableCtrlClickBuy;
 	static int buyMultiplierValue;
+
+	// InventorySelector;
+	static int InventoryCount;
+	static bool InventorySlot[5][8];
+	static bool InventoryAmmo;
 	
 	// AutoSell
 	static bool bFishingSell;
@@ -183,8 +220,16 @@ public:
 	static bool bForageableSellSQ;
 	static bool bForageableSellRarity[7];
 	static bool bTreeSell;
-	static bool bTreeSellRarity[4];
+	static bool bTreeSellRarity[5];
+	static bool bJunkSell;
 
+	// AutoOpen
+	static bool bAutoOpenWaterlogged;
+	static bool bAutoOpenOyster;
+	static bool bAutoOpenElderClam;
+
+	// AutoStorage
+	static bool bAutoStoreDecor;
 	
 
 	// Mods
@@ -193,7 +238,7 @@ public:
 	static bool bEnableAntiAfk;
 	static bool bEnableUnlimitedWardrobeRespec;
 	static bool bEnableInteractionMods;
-	static float InteractionRadius;
+	static float InteractionDistance;
 	static bool bEnableWaypointTeleport;
 	static bool bEasyModeActive;
 	
@@ -205,6 +250,7 @@ public:
 	static bool bEnableFreeLandscape;
 	static bool bEnableShowWeeklyWants;
 	static bool bEnableToolBricker;
+	static int32 ToolBrickerMaxSell;
 	static bool bEnableRequestMods;
 	static bool bEnableUnseenItems;
 
@@ -212,13 +258,13 @@ public:
 	static bool bPrizeWheelUseLocked;
 	static bool PrizeWheelSlots[9];
 
-
-
 	// Origin
 	static bool bFirstUse;
 	static bool bShowWatermark;
 	static bool showEnabledFeaturesWindow;
+	static bool showPlayerDistancesWindow;
 	static int selectedTheme;
+	static int cfg_SelectedLanguage;
 	static std::map<int, ImVec4> customColors;
 	
 	// Window configs
@@ -226,6 +272,8 @@ public:
 	static float windowSizeY;
 	static float activeWindowPosX;
 	static float activeWindowPosY;
+	static float playerWindowPosX;
+	static float playerWindowPosY;
 };
 
 #pragma endregion

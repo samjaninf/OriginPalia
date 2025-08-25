@@ -1,16 +1,23 @@
 #include "VillagerDetours.h"
-#include "Core/Configuration.h"
-#include "Core/DetourManager.h"
-#include "Misc/SDKExt.h"
-#include "Misc/Utils.h"
+#include "Configuration.h"
+#include "DetourManager.h"
+#include "SDKExt.h"
+#include "Utils.h"
 
 void VillagerDetours::SetupDetours(AValeriaCharacter* VC, AValeriaPlayerController* VPC) {
     //DetourManager::AddInstance(VC);
     //DetourManager::AddFunctionListener("Function Engine.Actor.ReceiveTick", &Tick, nullptr);
     DetourManager::AddFunctionDetour("Function Palia.GiftPreferenceTrackingComponent.IsAwareOfGiftingPreference",nullptr,&Func_IsAwareOfGiftingPreference);
+    DetourManager::AddFunctionDetour("Function Palia.GiftPreferenceTrackingComponent.IsAbleToGiftAtDifficulty",nullptr,&Func_IsAbleToGiftAtDifficulty);
 }
 
 void VillagerDetours::Func_IsAwareOfGiftingPreference(void* Context, void* TheStack, void* Result) {
+	if (Configuration::bEnableShowWeeklyWants) {
+		*static_cast<bool*>(Result) = true;
+	}
+}
+
+void VillagerDetours::Func_IsAbleToGiftAtDifficulty(void* Context, void* TheStack, void* Result) {
 	if (Configuration::bEnableShowWeeklyWants) {
 		*static_cast<bool*>(Result) = true;
 	}
@@ -20,7 +27,7 @@ void VillagerDetours::Func_IsAwareOfGiftingPreference(void* Context, void* TheSt
 void VillagerDetours::GiftVillagers() {
 	LastReport.clear();
 	
-	auto World = GetWorld();
+	auto World = UWorld::GetWorld();
 
 	auto GameStateBase = UGameplayStatics::GetGameState(World);
 	if (!GameStateBase->IsA(AValeriaGameState::StaticClass())) return;
@@ -45,13 +52,13 @@ void VillagerDetours::GiftVillagers() {
 
 	InGiftLoop = true;
 
-	for (auto Entry : ActorHandler::GetActorsOfType(EType::NPCs)) {
-		auto Villager = static_cast<AValeriaVillagerCharacter*>(Entry.Actor);
+	for (auto&& Entry : ActorHandler::GetActorsOfType(EType::NPCs)) {
+		auto Villager = static_cast<AValeriaVillagerCharacter*>(Entry->Actor);
 		if (!IsActorValid(Villager)) continue;
 		auto VillagerConfigID = Villager->GetVillagerConfigId();
 		auto VillagerCoreID = UValeriaBlueprintFunctionLibrary::GetVillagerCoreIdByVillagerId(World, VillagerConfigID);
 
-		std::string VillagerName(Entry.DisplayName.begin(), Entry.DisplayName.end());
+		std::string VillagerName(Entry->DisplayName.begin(), Entry->DisplayName.end());
 		std::cout << "Villager: " << VillagerName << "\n";
 		if (auto GiftReceiver = Villager->GetVillagerGiftReceiver(); GiftReceiver && GiftReceiver->IsVillagerInGiftableSpace()) {
 			if (GiftReceiver->CanGiftVillager(ValeriaCharacter)) {

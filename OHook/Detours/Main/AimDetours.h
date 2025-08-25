@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Overlay/PaliaOverlay.h"
+#include "PaliaOverlay.h"
 
 #include <SDK.hpp>
 #include <SDK/Palia_parameters.hpp>
@@ -17,6 +17,7 @@ public:
 
 	static void Func_DoInteliAim(const UObject* Context, UFunction* Function, void* Parms);
 	static void Func_DoSilentAim(const UObject* Context, UFunction* Function, void* Parms);
+	static void Func_DoAimbot(const UObject* Context, UFunction* Function, void* Parms);
 
 	static void ClientTravelInternal(const UObject* Context, UFunction* Function, void* Parms);
 	
@@ -28,6 +29,10 @@ public:
 	static FRotator BestTargetRotation;
 
 	static FVector AimOffset;
+	
+	// Anti-flicker variables
+	static std::chrono::steady_clock::time_point LastTargetChangeTime;
+	static AActor* PreviousTargetActor;
 };
 
 inline double AimDetours::BestScore = 0.0f;
@@ -38,3 +43,7 @@ inline FVector AimDetours::BestTargetLocation = { 0, 0, 0 };
 inline FRotator AimDetours::BestTargetRotation = { 0, 0, 0 };
 
 inline FVector AimDetours::AimOffset = { -1.5, -1.35, 0 };
+
+// Anti-flicker variables initialization
+inline std::chrono::steady_clock::time_point AimDetours::LastTargetChangeTime = std::chrono::steady_clock::now();
+inline AActor* AimDetours::PreviousTargetActor = nullptr;

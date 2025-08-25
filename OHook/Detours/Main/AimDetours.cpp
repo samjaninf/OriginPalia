@@ -1,12 +1,14 @@
-#include "Detours/Main/AimDetours.h"
-#include "Core/Configuration.h"
-#include "Core/Handlers/ActorHandler.h"
-#include "Core/Handlers/ToolHandler.h"
-#include "Overlay/PaliaOverlay.h"
-#include "Misc/SDKExt.h"
-#include "Misc/Utils.h"
+#include "AimDetours.h"
+#include "Configuration.h"
+#include "ActorHandler.h"
+#include "ToolHandler.h"
+#include "PaliaOverlay.h"
+#include "SDKExt.h"
+#include "Utils.h"
+#include "OverlayBase.h"
 
 #include "functional"
+#include <chrono>
 
 #include <SDK/Palia_parameters.hpp>
 
@@ -17,6 +19,7 @@ void AimDetours::SetupDetours(AValeriaCharacter* VC, AValeriaPlayerController* V
 	DetourManager::AddFunctionListener("Function Engine.PlayerController.ClientTravelInternal", &ClientTravelInternal, nullptr);
     DetourManager::AddInstance(VPC->MyHUD);
     DetourManager::AddFunctionListener("Function Engine.HUD.ReceiveDrawHUD", &Func_DoInteliAim, nullptr);
+    DetourManager::AddFunctionListener("Function Engine.HUD.ReceiveDrawHUD", &Func_DoAimbot, nullptr);
     DetourManager::AddInstance(VC->GetFiringComponent());
 	DetourManager::AddFunctionListener("Function Palia.ProjectileFiringComponent.RpcServer_FireProjectile", &Func_DoSilentAim, nullptr);
 }
@@ -43,58 +46,99 @@ void AimDetours::Func_DoInteliAim(const UObject* Context, UFunction* Function, v
     FRotator CharacterRotation = PlayerController->GetControlRotation();
     FVector ForwardVector = UKismetMathLibrary::GetForwardVector(CharacterRotation);
 
-    //FVector ZeroV(0, 0, 0);
-    //FRotator ZeroR(0, 0, 0);
+    // Anti-flicker constants
+    constexpr double TARGET_HOLD_TIME_MS = 50.0; // Minimum time to hold a target before switching (50ms)
+    constexpr double SCORE_IMPROVEMENT_THRESHOLD = 0.15; // Require 15% better score to switch targets
+    
+    auto currentTime = std::chrono::steady_clock::now();
+    auto timeSinceLastChange = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - LastTargetChangeTime).count();
+    
+    // Check if current target is still valid and within hold time
+    bool shouldKeepCurrentTarget = false;
+    if (BestTargetActor && IsActorValid(BestTargetActor) && timeSinceLastChange < TARGET_HOLD_TIME_MS) {
+        shouldKeepCurrentTarget = true;
+        
+        // Recalculate current target's score to check if it's still viable
+        for (auto& Entry : ActorHandler::GetActors()) {
+            if (Entry->Actor == BestTargetActor) {
+                bool bShouldConsider = false;
+                auto ActorType = Entry->ActorType();
+                
+                if (isPlayerAiming) {
+                    switch (ActorType) {
+                    case EType::Animal:
+                        bShouldConsider = Entry->ShouldShow(ValeriaCharacter) && (ToolHandler::EquippedTool == ETools::Bow) && CharacterLocation.GetDistanceToInMeters(Entry->WorldPosition) <= 22.0f;
+                        break;
+                    case EType::Bug:
+                        bShouldConsider = Entry->ShouldShow(ValeriaCharacter) && (ToolHandler::EquippedTool == ETools::Belt);
+                        break;
+                    default:
+                        continue;
+                    }
+                }
+                else {
+                    bShouldConsider = Entry->ShouldShow(ValeriaCharacter);
+                    if (!Configuration::bAvoidTeleportingToPlayers && Entry->ActorType() == EType::Players) bShouldConsider = false;
+                }
+                
+                // If current target is no longer valid, allow switching
+                if (!bShouldConsider || Entry->Distance > Configuration::CullDistance) {
+                    shouldKeepCurrentTarget = false;
+                }
+                break;
+            }
+        }
+    }
+    
+    if (shouldKeepCurrentTarget) {
+        return; // Keep current target, don't recalculate
+    }
 
-    //BestTargetActor = nullptr;
-    //BestTargetActorType = EType::MAX;
-    //BestTargetLocation = ZeroV;
-    //BestTargetRotation = ZeroR;
     double currentBestScore = DBL_MAX;
 
     for (auto& Entry : ActorHandler::GetActors()) {
-        if (!IsActorValid(Entry.Actor) || Entry.WorldPosition.IsZero()) {
+        if (!IsActorValid(Entry->Actor) || Entry->WorldPosition.IsZero()) {
             continue;
         }
 
-        auto ActorType = Entry.ActorType;
+        auto ActorType = Entry->ActorType();
 
         bool bShouldConsider = false;
 
         if (isPlayerAiming) {
             switch (ActorType) {
             case EType::Animal:
-                bShouldConsider = Entry.ShouldShow(ValeriaCharacter) && (ToolHandler::EquippedTool == ETools::Bow) && CharacterLocation.GetDistanceToInMeters(Entry.WorldPosition) <= 22.0f;
+                bShouldConsider = Entry->ShouldShow(ValeriaCharacter) && (ToolHandler::EquippedTool == ETools::Bow) && CharacterLocation.GetDistanceToInMeters(Entry->WorldPosition) <= 22.0f;
                 break;
             case EType::Bug:
-                bShouldConsider = Entry.ShouldShow(ValeriaCharacter) && (ToolHandler::EquippedTool == ETools::Belt);
+                bShouldConsider = Entry->ShouldShow(ValeriaCharacter) && (ToolHandler::EquippedTool == ETools::Belt);
                 break;
             default:
                 continue;
             }
         }
         else {
-            bShouldConsider = Entry.ShouldShow(ValeriaCharacter);
-            if (!Configuration::bAvoidTeleportingToPlayers && Entry.ActorType == EType::Players) bShouldConsider = false;
+            bShouldConsider = Entry->ShouldShow(ValeriaCharacter);
+            if (!Configuration::bAvoidTeleportingToPlayers && Entry->ActorType() == EType::Players) bShouldConsider = false;
         }
 
         if (!bShouldConsider)
             continue;
 
-        FVector ActorLocation = Entry.WorldPosition;
+        FVector ActorLocation = Entry->WorldPosition;
         FVector DirectionToActor = (ActorLocation - CharacterLocation).GetNormalized();
-        FVector TargetVelocity = Entry.Actor->GetVelocity();
+        FVector TargetVelocity = Entry->Actor->GetVelocity();
 
         FVector RelativeVelocity = TargetVelocity - ValeriaCharacter->GetVelocity();
         FVector RelativeDirection = RelativeVelocity.GetNormalized();
 
-        auto Distance = Entry.Distance;
+        auto Distance = Entry->Distance;
         float Angle = CustomMath::RadiansToDegrees(acosf(static_cast<float>(ForwardVector.Dot(DirectionToActor))));
 
         if (ActorLocation.IsZero())
             continue;
 
-        if (Entry.Actor == ValeriaCharacter)
+        if (Entry->Actor == ValeriaCharacter)
             continue;
 
         if (Distance > Configuration::CullDistance)
@@ -129,13 +173,38 @@ void AimDetours::Func_DoInteliAim(const UObject* Context, UFunction* Function, v
 
         // Calculate score based on weighted sum of factors
         if (double Score = AngleWeight * Angle + DistanceWeight * Distance + MovementWeight * RelativeDirection.Magnitude(); Angle <= Configuration::FOVRadius / 2.0 && Score < 50.0f) {
-            if (Score < currentBestScore) {
+            bool shouldUpdateTarget = false;
+            
+            if (BestTargetActor == nullptr) {
+                // No current target, accept any valid target
+                shouldUpdateTarget = (Score < currentBestScore);
+            }
+            else if (Entry->Actor == BestTargetActor) {
+                // Current target found again, update its info but don't trigger change timer
+                shouldUpdateTarget = true;
+            }
+            else {
+                // Different target found, apply hysteresis
+                // Require significantly better score to switch (must be X% better than current best)
+                double requiredImprovement = currentBestScore * (1.0 - SCORE_IMPROVEMENT_THRESHOLD);
+                shouldUpdateTarget = (Score < requiredImprovement);
+            }
+            
+            if (shouldUpdateTarget && Score < currentBestScore) {
+                bool isTargetChange = (BestTargetActor != Entry->Actor);
+                
                 currentBestScore = Score;
                 BestScore = Score;
-                BestTargetActor = Entry.Actor;
+                BestTargetActor = Entry->Actor;
                 BestTargetActorType = ActorType;
                 BestTargetLocation = ActorLocation;
                 BestTargetRotation = UKismetMathLibrary::FindLookAtRotation(CharacterLocation, ActorLocation);
+                
+                // Update change time only if this is actually a different target
+                if (isTargetChange) {
+                    LastTargetChangeTime = currentTime;
+                    PreviousTargetActor = BestTargetActor;
+                }
             }
         }
     }
@@ -206,4 +275,79 @@ void AimDetours::ClientTravelInternal(const UObject* Context, UFunction* Functio
     BestTargetRotation = { 0, 0, 0 };
 
     AimOffset = { -1.5, -1.35, 0 };
+    
+    // Reset anti-flicker variables
+    LastTargetChangeTime = std::chrono::steady_clock::now();
+    PreviousTargetActor = nullptr;
+}
+
+void AimDetours::Func_DoAimbot(const UObject* Context, UFunction* Function, void* Parms) {
+    if (!Configuration::bEnableAimbot)
+        return;
+
+    const auto PlayerController = GetPlayerController();
+    if (!PlayerController || !IsActorValid(PlayerController))
+        return;
+
+    const auto ValeriaCharacter = GetValeriaCharacter();
+    if (!ValeriaCharacter || !IsActorValid(ValeriaCharacter))
+        return;
+
+    // Check if overlay is showing or game window is not active
+    auto Overlay = static_cast<PaliaOverlay*>(OverlayBase::Instance);
+    if (!Overlay || Overlay->ShowOverlay())
+        return;
+
+    // Get target from the existing targeting system
+    AActor* TargetActor = BestTargetActor;
+    if (!TargetActor || !IsActorValid(TargetActor))
+        return;
+
+    // Only target animals if the setting is enabled
+    if (BestTargetActorType != EType::Animal)
+        return;
+
+    // Check if the target should be shown in ESP (this respects the ESP toggles)
+    bool bShouldTarget = false;
+    for (auto& Entry : ActorHandler::GetActors()) {
+        if (Entry->Actor == TargetActor) {
+            bShouldTarget = Entry->ShouldShow(ValeriaCharacter);
+            break;
+        }
+    }
+    
+    if (!bShouldTarget)
+        return;
+
+    FVector BestTargetLocation = AimDetours::BestTargetLocation;
+
+    const auto CameraManager = PlayerController->PlayerCameraManager;
+    if (!CameraManager || !IsActorValid(CameraManager))
+        return;
+
+    FVector CameraLocation = CameraManager->GetCameraLocation();
+    FRotator TargetRotation = UKismetMathLibrary::FindLookAtRotation(CameraLocation, BestTargetLocation);
+    FRotator CurrentControlRotation = PlayerController->GetControlRotation();
+
+    // Check if aimbot key is held
+    bool bAimbotKeyHeld = (GetAsyncKeyState(Configuration::AimbotKey) & 0x8000) != 0;
+    
+    if (!bAimbotKeyHeld)
+        return;
+
+    // Apply smoothing
+    float SmoothingFactor = UKismetMathLibrary::Clamp(Configuration::AimbotSmoothing, 1.0f, 100.0f);
+    
+    if (SmoothingFactor == 1.0f) {
+        // Instant aim
+        PlayerController->SetControlRotation(TargetRotation);
+    }
+    else {
+        // Smooth aim
+        float InterpSpeed = UKismetMathLibrary::MapRangeClamped(SmoothingFactor, 1.0f, 100.0f, 25.0f, 1.0f);
+        float DeltaTime = UGameplayStatics::GetWorldDeltaSeconds(SDK::UWorld::GetWorld());
+        FRotator SmoothedRotation = UKismetMathLibrary::RInterpTo(CurrentControlRotation, TargetRotation, DeltaTime, InterpSpeed);
+        
+        PlayerController->SetControlRotation(SmoothedRotation);
+    }
 }

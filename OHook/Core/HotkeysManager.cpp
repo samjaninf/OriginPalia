@@ -1,16 +1,14 @@
-﻿#include "Core/HotkeysManager.h"
-#include "Core/Configuration.h"
-#include "Core/DetourManager.h"
-#include "Core/Handlers/WidgetHandler.h"
-#include "Overlay/PaliaOverlay.h"
-#include "Detours/Main/MovementDetours.h"
-#include "Detours/Main/FishingDetours.h"
-#include "Detours/Main/TeleportDetours.h"
+﻿#include "HotkeysManager.h"
+#include "Configuration.h"
+#include "DetourManager.h"
+#include "WidgetHandler.h"
+#include "PaliaOverlay.h"
+#include "MovementDetours.h"
+#include "FishingDetours.h"
+#include "TeleportDetours.h"
 
-#include "menu/menu.hpp"
-
-#include "Misc/ImGuiExt.h"
-#include "Misc/Utils.h"
+#include "ImGuiExt.h"
+#include "Utils.h"
 
 #include <unordered_map>
 #include <functional>
@@ -21,7 +19,7 @@
 
 std::unordered_map<std::string, std::pair<int, std::function<void()>>> HotkeysManager::hotkeys;
 std::unordered_set<int> HotkeysManager::pressedKeys;
-std::set<int> HotkeysManager::disallowedKeys = { 0x01, 0x02, 0x1B, 0x2D, 0x41, 0x44, 0x53, 0x57 }; // Initialize the disallowed keys
+std::set<int> HotkeysManager::disallowedKeys = { 0x01, 0x02, 0x1B, 0x2D, 0xC0, 0x41, 0x44, 0x53, 0x57 }; // Initialize the disallowed keys
 
 #define REGISTER_HOTKEY(actionName, callback, save_file_type)   \
     RegisterHotkey(actionName, GetHotkey(actionName), [=]() {   \
@@ -78,16 +76,19 @@ void HotkeysManager::InitHotkeys() {
         if (!Configuration::showEnabledFeaturesWindow)
             ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Show Crosshair toggled %s.", (Configuration::bDrawCrosshair ? "ON" : "OFF")});
     }, ESaveFile::AimSettings)
+    REGISTER_HOTKEY("EnableAimbot", [] {
+        Configuration::bEnableAimbot = !Configuration::bEnableAimbot;
+        if (!Configuration::showEnabledFeaturesWindow)
+            ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Aimbot toggled %s.", (Configuration::bEnableAimbot ? "ON" : "OFF")});
+    }, ESaveFile::AimSettings)
     REGISTER_HOTKEY("EnableSilentAimbot", [] {
         Configuration::bEnableSilentAimbot = !Configuration::bEnableSilentAimbot;
         if (!Configuration::showEnabledFeaturesWindow)
             ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Silent Aimbot toggled %s.", (Configuration::bEnableSilentAimbot ? "ON" : "OFF")});
     }, ESaveFile::AimSettings)
     REGISTER_HOTKEY("EnableTeleportingToTarget", [] {
-        Configuration::bTeleportToTargeted = !Configuration::bTeleportToTargeted;
-        if (!Configuration::showEnabledFeaturesWindow)
-            ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Teleport To Targeted toggled %s.", (Configuration::bTeleportToTargeted ? "ON" : "OFF")});
-    }, ESaveFile::AimSettings)
+        TeleportDetours::ForceTeleportToTarget();
+    }, ESaveFile::NONE)
     REGISTER_HOTKEY("AvoidTeleportingToPlayers", [] {
         Configuration::bAvoidTeleportingToPlayers = !Configuration::bAvoidTeleportingToPlayers;
         if (!Configuration::showEnabledFeaturesWindow)
@@ -186,16 +187,6 @@ void HotkeysManager::InitHotkeys() {
         if (!Configuration::showEnabledFeaturesWindow)
             ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Instant Catch toggled %s.", (Configuration::bFishingInstantCatch ? "ON" : "OFF")});
     }, ESaveFile::ToolSkillsSettings)
-    REGISTER_HOTKEY("DiscardAllJunk", [] {
-        Configuration::bFishingDiscard = !Configuration::bFishingDiscard;
-        if (!Configuration::showEnabledFeaturesWindow)
-            ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Discard All Junk toggled %s.", (Configuration::bFishingDiscard ? "ON" : "OFF")});
-    }, ESaveFile::ToolSkillsSettings)
-    REGISTER_HOTKEY("OpenandStoreMakeshiftDecor", [] {
-        Configuration::bFishingOpenStoreWaterlogged = !Configuration::bFishingOpenStoreWaterlogged;
-        if (!Configuration::showEnabledFeaturesWindow)
-            ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Open and Store Makeshift Decor toggled %s.", (Configuration::bFishingOpenStoreWaterlogged ? "ON" : "OFF")});
-    }, ESaveFile::ToolSkillsSettings)
     REGISTER_HOTKEY("AutoFastFishing", [] {
         FishingDetours::bEnableAutoFishing = !FishingDetours::bEnableAutoFishing;
         if (!Configuration::showEnabledFeaturesWindow)
@@ -210,6 +201,11 @@ void HotkeysManager::InitHotkeys() {
         FishingDetours::bOverrideFishingSpot = !FishingDetours::bOverrideFishingSpot;
         if (!Configuration::showEnabledFeaturesWindow)
             ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Force Fishing Pool toggled %s.", (FishingDetours::bOverrideFishingSpot ? "ON" : "OFF")});
+    }, ESaveFile::ToolSkillsSettings)
+    REGISTER_HOTKEY("AutoRefillFocus", [] {
+        Configuration::bEnableAutoFocus = !Configuration::bEnableAutoFocus;
+        if (!Configuration::showEnabledFeaturesWindow)
+            ImGui::InsertNotification({ImGuiToastType::Info, 2000, "Auto Refill Focus toggled %s.", (Configuration::bEnableAutoFocus ? "ON" : "OFF")});
     }, ESaveFile::ToolSkillsSettings)
     #pragma endregion ToolSkillsSettings
     
@@ -365,17 +361,15 @@ void HotkeysManager::RegisterHotkey(const std::string& actionName, int key, cons
 }
 
 void HotkeysManager::CheckHotkeys(const UObject* Context, UFunction* Function, void* Parms) {
-    if (ImGui::isHotkeySelectorPopupOpen)
+    if (ImGui::isHotkeySelectorPopupOpen || (!IsGameWindowActive()))
         return;
 
     for (auto& [actionName, keyCallbackPair] : hotkeys) {
         int key = keyCallbackPair.first;
         auto& callback = keyCallbackPair.second;
         if (GetAsyncKeyState(key) & 0x8000 && !pressedKeys.contains(key)) {
-            if (IsGameWindowActive() || !Menu::bShowMenu) {
-                if (callback) callback();
-                pressedKeys.insert(key);
-            }
+            if (callback) callback();
+            pressedKeys.insert(key);
         }
         if (!(GetAsyncKeyState(key) & 0x8000)) {
             pressedKeys.erase(key);

@@ -1,22 +1,62 @@
-#include "Detours/Main/MovementDetours.h"
-#include "Core/Configuration.h"
-#include "Overlay/PaliaOverlay.h"
-#include "Misc/SDKExt.h"
-#include "Misc/Utils.h"
+#include "MovementDetours.h"
+#include "Configuration.h"
+#include "DetourManager.h"
+#include "PaliaOverlay.h"
+#include "SDKExt.h"
+#include "Utils.h"
 
 #include "functional"
 #include <fstream>
+#include <chrono>
 
 #include <SDK/Palia_parameters.hpp>
 
 using namespace SDK;
 
+std::chrono::steady_clock::time_point MovementDetours::LastTickTime = std::chrono::steady_clock::now();
+
 void MovementDetours::SetupDetours(AValeriaCharacter* VC, AValeriaPlayerController* VPC) {
+    LastTickTime = std::chrono::steady_clock::now();
+
     DetourManager::AddInstance(VC);
 	DetourManager::AddFunctionListener("Function Engine.Actor.ReceiveTick", &Func_DoNoClip, nullptr);
+    DetourManager::AddFunctionListener("Function Engine.Actor.ReceiveTick", &Func_DoSpinbot, nullptr);
 	DetourManager::AddFunctionListener("Function Engine.Actor.ReceiveTick", &Func_DoPersistentMovement, nullptr);
     DetourManager::AddInstance(VC->GetValeriaCharacterMovementComponent());
 	DetourManager::AddFunctionListener("Function Palia.ValeriaClientPriMovementComponent.RpcServer_SendMovement", &Func_SendMovement, nullptr);
+}
+
+void MovementDetours::Func_DoSpinbot(const UObject* Context, UFunction* Function, void* Parms) {
+    if (!bEnableSpinbot)
+        return;
+
+    const auto ValeriaCharacter = GetValeriaCharacter();
+    if (!ValeriaCharacter)
+        return;
+
+    ValeriaCharacter->SetActorTickInterval(0.01f);
+
+    UValeriaCharacterMoveComponent* ValeriaMovementComponent = ValeriaCharacter->GetValeriaCharacterMovementComponent();
+    if (!IsComponentValid(ValeriaMovementComponent))
+        return;
+
+    FRotator CurrentRotation = ValeriaCharacter->K2_GetActorRotation();
+
+    auto Now = std::chrono::steady_clock::now();
+    std::chrono::duration<float> ElapsedTime = Now - LastTickTime;
+    LastTickTime = Now;
+    float DeltaTime = ElapsedTime.count();
+
+    float MaxYawChange = 180.0f;
+    float YawChange = SpinSpeed * DeltaTime;
+
+    if (YawChange > MaxYawChange) {
+        YawChange = MaxYawChange;
+    }
+
+    CurrentRotation.Yaw += YawChange;
+
+    ValeriaCharacter->K2_SetActorRotation(CurrentRotation, false);
 }
 
 void MovementDetours::Func_DoNoClip(const UObject* Context, UFunction* Function, void* Parms) {
@@ -36,8 +76,20 @@ void MovementDetours::Func_DoNoClip(const UObject* Context, UFunction* Function,
     if (bEnableNoclip != bPreviousNoclipState) {
         if (bEnableNoclip) {
             ValeriaMovementComponent->SetMovementMode(EMovementMode::MOVE_Flying, 5);
-            ValeriaCharacter->CapsuleComponent->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Ignore);
+
+            // Not home
+            if (ActorHandler::CurrentMap != EValeriaLevel::Home) {
+                ValeriaCharacter->CapsuleComponent->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Ignore);
+            }
+            // At home
+            else {
+                //ValeriaCharacter->CapsuleComponent->SetCollisionResponseToChannel(ECollisionChannel::ECC_WorldStatic, ECollisionResponse::ECR_Block);     // Collision w/ static objs
+                ValeriaCharacter->CapsuleComponent->SetCollisionResponseToChannel(ECollisionChannel::ECC_WorldDynamic, ECollisionResponse::ECR_Block);     // Ignore dynamic objs
+                ValeriaCharacter->CapsuleComponent->SetCollisionResponseToChannel(ECollisionChannel::ECC_Pawn, ECollisionResponse::ECR_Ignore);             // Ignore pawns actors
+                ValeriaCharacter->CapsuleComponent->SetCollisionResponseToChannel(ECollisionChannel::ECC_PhysicsBody, ECollisionResponse::ECR_Ignore);      // Ignore physics bodies
+            }
         }
+        // Disabled
         else {
             ValeriaMovementComponent->SetMovementMode(EMovementMode::MOVE_Walking, 1);
             ValeriaCharacter->CapsuleComponent->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
@@ -49,7 +101,7 @@ void MovementDetours::Func_DoNoClip(const UObject* Context, UFunction* Function,
 
     // Logic for Noclip Camera
     if (bEnableNoclip) {
-        if (Menu::bShowMenu || !IsGameWindowActive())
+        if (!IsGameWindowActive())
             return;
 
         const auto PlayerController = GetPlayerController();
@@ -69,31 +121,31 @@ void MovementDetours::Func_DoNoClip(const UObject* Context, UFunction* Function,
         float FlySpeed = 800.0f;
         bool bIsMoving = false;
 
-        if (IsKeyHeld('W')) {
+        if (FENTRY_IsKeyHeld('W')) {
             MovementDirection += CameraForward;
             bIsMoving = true;
         }
-        if (IsKeyHeld('S')) {
+        if (FENTRY_IsKeyHeld('S')) {
             MovementDirection -= CameraForward;
             bIsMoving = true;
         }
-        if (IsKeyHeld('D')) {
+        if (FENTRY_IsKeyHeld('D')) {
             MovementDirection += CameraRight;
             bIsMoving = true;
         }
-        if (IsKeyHeld('A')) {
+        if (FENTRY_IsKeyHeld('A')) {
             MovementDirection -= CameraRight;
             bIsMoving = true;
         }
-        if (IsKeyHeld(VK_SPACE)) {
+        if (FENTRY_IsKeyHeld(VK_SPACE)) {
             MovementDirection += CameraUp;
             bIsMoving = true;
         }
-        if (IsKeyHeld(VK_CONTROL)) {
+        if (FENTRY_IsKeyHeld(VK_CONTROL)) {
             MovementDirection -= CameraUp;
             bIsMoving = true;
         }
-        if (IsKeyHeld(VK_SHIFT)) {
+        if (FENTRY_IsKeyHeld(VK_SHIFT)) {
             FlySpeed *= 2.0f;
         }
 

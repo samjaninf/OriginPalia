@@ -10,8 +10,8 @@ using namespace SDK;
 class TeleportDetours final {
 public:
 	TeleportDetours() = default;
-
-	enum class ETeleportDirection {
+	
+	enum class ETeleportDirection : std::uint8_t {
 		None,
 		Forward,
 		Right,
@@ -21,16 +21,20 @@ public:
 		Downwards
 	};
 
-	static void SetupDetours(AValeriaCharacter* VC, AValeriaPlayerController* VPC);
-	
-	static void Func_DoTeleportToTargeted(const UObject* Context, UFunction* Function, void* Parms);
-	static void Func_DoTeleportToWaypoint(const UObject* Context, UFunction* Function, void* Parms);
-	static void DoGCLogic(const AValeriaCharacter* ValeriaCharacter);
-	
-	// To Destination
-	static void TeleportPlayer(const FVector& Dest, float Offset, ETeleportDirection Direction);
-	static void TeleportPlayer(const FVector& Dest) {
-		TeleportPlayer(Dest, 0.0f, ETeleportDirection::None);
+	static void TeleportPlayer(const FVector& Destination, float Offset, ETeleportDirection Direction);
+	static void TeleportPlayer(const FVector& Destination) {
+		TeleportPlayer(Destination, 0.0f, ETeleportDirection::None);
 	}
-
+	
+	static void SetupDetours(AValeriaCharacter* VC, AValeriaPlayerController* VPC);
+	static void Func_DoTeleportToTargeted(const UObject* Context, UFunction* Function, void* Parms);
+	static void TeleportToIngameWaypoint(const UObject* Context, UFunction* Function, void* Parms);
+	static void TeleportToMapWaypoint(const UObject* Context, UFunction* Function, void* Parms);
+	static void ForceTeleportToTarget();
+	
+private:
+	static bool IsPlayerNearby();
+	static void DoGCLogic(const AValeriaCharacter* ValeriaCharacter);
 };
+
+inline bool worldMapTeleported = false;

@@ -4,13 +4,13 @@
 #include <string>
 #include <type_traits>
 
-#include "Core/Configuration.h"
-#include "Core/HotkeysManager.h"
-#include "Core/DetourManager.h"
+#include "Configuration.h"
+#include "HotkeysManager.h"
+#include "DetourManager.h"
 
 #include "ImGuiNotify.hpp"
 
-#include <fonts/fonts.h>
+#include <Fonts.h>
 
 namespace ImGui {
 
@@ -187,16 +187,16 @@ namespace ImGui {
 
         return keyNames.contains(key) ? keyNames[key] : "Unknown";
     }
-    
+
     /**
-     * 
+     *
      * @param label = name/id of checkbox
      * @param v = ptr bool
      * @param additionalMenuItems = optional additional menu items
      * @return button fired.
      */
     IMGUI_API bool Checkbox2(const char* label, bool* v, const std::vector<std::pair<std::string, std::function<void()>>>& additionalMenuItems = {});
-    IMGUI_API bool Button2(const char* label, const ImVec2& size_arg = ImVec2(0,0), ImGuiButtonFlags flags = 0);
+    IMGUI_API bool Button2(const char* label, const ImVec2& size_arg = ImVec2(0, 0), ImGuiButtonFlags flags = 0);
 
     void BeginGroupPanel(const char* name, const ImVec2& size = ImVec2(-1.0f, -1.0f));
     void EndGroupPanel();
@@ -258,7 +258,7 @@ namespace ImGui {
             valueChanged = ImGui::SliderFloat(label, value, v_min, v_max, format);
         }
         else if constexpr (std::is_same_v<T, int>) {
-            valueChanged = ImGui::SliderInt(label, value, v_min, v_max);
+            valueChanged = ImGui::SliderInt(label, value, v_min, v_max, format);
         }
         else if constexpr (std::is_same_v<T, double>) {
             valueChanged = ImGui::SliderScalar(label, ImGuiDataType_Double, value, &v_min, &v_max, format);
@@ -308,21 +308,25 @@ namespace ImGui {
     * @param sliderMax Maximum value for the slider (if type is "slider").
     * @param sliderFormat Format string for the slider value (if type is "slider").
     */
-    inline void RenderSupporterFeature(const char* featureName, void* featureFlag, const char* tooltip, const char* type, float sliderMin = 0.0f, float sliderMax = 1.0f, const char* sliderFormat = "%.3f", CheckboxHotkeyFlags hotkey_or_default = CheckboxHotkeyFlags::DEFAULT) {
+    template<typename T>
+    inline void RenderSupporterFeature(const char* featureName, T* featureFlag, const char* tooltip, const char* type, T sliderMin, T sliderMax, const char* sliderFormat, CheckboxHotkeyFlags hotkey_or_default = CheckboxHotkeyFlags::DEFAULT) {
 #ifdef ENABLE_SUPPORTER_FEATURES
-        if (strcmp(type, "checkbox") == 0) {
-            CheckboxDispatcher(featureName, static_cast<bool*>(featureFlag), tooltip, hotkey_or_default);
-        } else if (strcmp(type, "slider") == 0) {
-            SetNextItemWidth(200.0f);
-            SliderDispatcher(featureName, static_cast<float*>(featureFlag), sliderMin, sliderMax, sliderFormat, tooltip);
-        } else if (strcmp(type, "button") == 0) {
-            if (Button(featureName)) {
-                *static_cast<bool*>(featureFlag) = true;
-                Configuration::Save();
+        if constexpr (std::is_same_v<T, bool>) {
+            if (strcmp(type, "checkbox") == 0) {
+                CheckboxDispatcher(featureName, featureFlag, tooltip, hotkey_or_default);
             }
-            if (tooltip && IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                SetTooltip("%s", tooltip);
+            else if (strcmp(type, "button") == 0) {
+                if (Button(featureName)) {
+                    *featureFlag = true;
+                    Configuration::Save();
+                }
+                if (tooltip && IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    SetTooltip("%s", tooltip);
+                }
             }
+        }
+        else if (strcmp(type, "slider") == 0) {
+            SliderDispatcher(featureName, featureFlag, sliderMin, sliderMax, sliderFormat, tooltip);
         }
 #else
         if (strcmp(type, "checkbox") == 0 || strcmp(type, "button") == 0) {
@@ -332,12 +336,28 @@ namespace ImGui {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::Text(ICON_FA_LOCK " %s", featureName);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("Unavailable in this build of OriginPalia");
+            ImGui::SetTooltip("Unavailable in this OriginPalia build.");
         }
         ImGui::PopStyleColor();
         ImGui::EndGroup();
         ImGui::Spacing();
 #endif
+    }
+
+    template<typename T>
+    inline void RenderSupporterFeature(const char* featureName, T* featureFlag, const char* tooltip, const char* type, CheckboxHotkeyFlags hotkey_or_default = CheckboxHotkeyFlags::DEFAULT) {
+        if constexpr (std::is_same_v<T, bool>) {
+            RenderSupporterFeature(featureName, featureFlag, tooltip, type, false, false, NULL, hotkey_or_default);
+        }
+        else if constexpr (std::is_same_v<T, float>) {
+            RenderSupporterFeature(featureName, featureFlag, tooltip, type, 0.0f, 1.0f, "%.3f", hotkey_or_default);
+        }
+        else if constexpr (std::is_same_v<T, int>) {
+            RenderSupporterFeature(featureName, featureFlag, tooltip, type, 1, 10, "%d", hotkey_or_default);
+        }
+        else if constexpr (std::is_same_v<T, double>) {
+            RenderSupporterFeature(featureName, featureFlag, tooltip, type, 0.0, 1.0, "%.3f", hotkey_or_default);
+        }
     }
 }
 
@@ -557,3 +577,52 @@ inline std::map<int, std::string> GuiColors = {
 
     {ImGuiCol_ModalWindowDimBg, "ModalWindowDimBg"} // 55
 };
+
+enum ItemLabelFlag : uint8_t {
+    LabelLeft = 1u << 0u,
+    LabelRight = 1u << 1u,
+    LabelDefault = LabelLeft,
+};
+
+inline void ItemLabel(std::string_view title, ItemLabelFlag flags, float spacing = 0.0f) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImVec2 lineStart = ImGui::GetCursorScreenPos();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    float itemWidth = ImGui::CalcItemWidth() + style.ItemSpacing.x;
+
+    ImVec2 textSize = ImGui::CalcTextSize(title.data(), title.data() + title.size());
+    ImRect textRect;
+    textRect.Min = ImGui::GetCursorScreenPos();
+
+    if (flags & ItemLabelFlag::LabelRight) textRect.Min.x += itemWidth;
+
+    textRect.Max = textRect.Min;
+    textRect.Max.x += textSize.x;
+    textRect.Max.y += textSize.y;
+
+    // Align the label to the frame padding and adjust the vertical positioning.
+    ImGui::AlignTextToFramePadding();
+    textRect.Min.y += window->DC.CurrLineTextBaseOffset;
+    textRect.Max.y += window->DC.CurrLineTextBaseOffset;
+
+    // Register the item with ImGui
+    ImGui::ItemSize(textRect);
+    if (ImGui::ItemAdd(textRect, window->GetID(title.data(), title.data() + title.size()))) {
+        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), textRect.Min, textRect.Max, textRect.Max.x, textRect.Max.x, title.data(), title.data() + title.size(), &textSize);
+
+        if (textRect.GetWidth() < textSize.x && ImGui::IsItemHovered()) ImGui::SetTooltip("%.*s", static_cast<int>(title.size()), title.data());
+    }
+
+    // Handle the flags for left/right alignment, if necessary.
+    if (flags & ItemLabelFlag::LabelLeft) {
+        ImGui::SetCursorScreenPos(ImVec2{ 0, textSize.y + window->DC.CurrLineTextBaseOffset });
+        ImGui::SameLine();
+    }
+    else if (flags & ItemLabelFlag::LabelRight) {
+        ImGui::SetCursorScreenPos(lineStart);
+    }
+
+    if (spacing > 0) {
+        ImGui::SetCursorScreenPos(ImVec2(lineStart.x + spacing, lineStart.y));
+    }
+}

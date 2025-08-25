@@ -1,11 +1,11 @@
-#include "Detours/Main/HUDDetours.h"
-#include "Core/Configuration.h"
-#include "Core/DetourManager.h"
-#include "Core/Handlers/ActorHandler.h"
-#include "Core/Handlers/WidgetHandler.h"
-#include "Overlay/PaliaOverlay.h"
-#include "Misc/SDKExt.h"
-#include "Misc/Utils.h"
+#include "HUDDetours.h"
+#include "Configuration.h"
+#include "DetourManager.h"
+#include "ActorHandler.h"
+#include "WidgetHandler.h"
+#include "PaliaOverlay.h"
+#include "SDKExt.h"
+#include "Utils.h"
 
 #include "functional"
 #include <format>
@@ -30,237 +30,142 @@ void HUDDetours::ReceiveDrawHUD(const UObject* Context, UFunction* Function, voi
     const auto ValeriaCharacter = GetValeriaCharacter();
     if (!ValeriaCharacter)
         return;
+
+    const auto PlayerController = GetPlayerController();
+    if (!PlayerController)
+        return;
     
     FVector2D CanvasSize = {static_cast<float>(HUD->Canvas->SizeX), static_cast<float>(HUD->Canvas->SizeY)};
 
     // Draw ESP Names Entities
-    for (auto& [Actor, WorldPosition, DisplayName, ActorType, Type, Quality, Variant, Distance, Texture, Despawn] : ActorHandler::GetActors()) {
-        if (WorldPosition.IsZero() || !IsActorValid(Actor)) {
+    // [Actor, WorldPosition, DisplayName, ActorType, Type, Quality, Variant, Distance, Texture, Despawn]
+    for (const auto& Entry : ActorHandler::GetActors()) {
+        if (!Entry->ShouldShow(ValeriaCharacter))
+            continue;
+
+        if (Entry->WorldPosition.IsZero() || !IsActorValid(Entry->Actor)) {
             continue;
         }
 
         // skip hidden actors from other sub-plots
-        if ((ActorHandler::CurrentMap & EValeriaLevel::Home) && !Actor->bActorEnableCollision) continue;
+        if ((ActorHandler::CurrentMap & EValeriaLevel::Home) && !Entry->Actor->bActorEnableCollision) continue;
         
-        if (ActorType == EType::Players) {
-            if (Actor == ValeriaCharacter)
+        if (Entry->ActorType() == EType::Players) {
+            if (Entry->Actor == ValeriaCharacter)
                 continue;
         }
         
-        const auto PlayerController = GetPlayerController();
-        if (!PlayerController)
-            break;
-        
-        FVector ActorLocation = WorldPosition;
+        FVector ActorLocation = Entry->WorldPosition;
         
         // Adjust Z coordinate for head-level display
         ActorLocation.Z += 100.0; // Adjust this value based on typical actor height
 
-        if (Distance > Configuration::CullDistance)
+        if (Entry->Distance > Configuration::CullDistance)
             continue;
 
         ImU32 Color = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF);
-        bool bShouldDraw = false;
 
         bool bShouldDrawStar = false;
         bool bIconShouldUseColor = false;
         bool bOverlayText = false;
         std::string OverlayText;
 
-        switch (ActorType) {
+        switch (Entry->ActorType()) {
         case EType::Forage:
-            if (Forageables[Type][Quality]) {
-                if (!Actor->bActorEnableCollision) {
-                    continue;
-                }
-                bShouldDraw = true;
-                if (auto it = Configuration::ForageableColors.find(static_cast<EForageableType>(Type)); it != Configuration::ForageableColors.end())
-                    Color = it->second;
-                if (Quality == 1) {
-                    bShouldDrawStar = true;
-                }
+            if (auto it = Configuration::ForageableColors.find(static_cast<FEntryGatherable::TypeEnum>(Entry->Type())); it != Configuration::ForageableColors.end())
+                Color = it->second;
+            if (Entry->Quality() == 1) {
+                bShouldDrawStar = true;
             }
             break;
         case EType::Ore:
-            if (Ores[Type][Variant]) {
-                auto Ore = static_cast<ABP_ValeriaGatherableLoot_C*>(Actor);
-                if (Ore && IsActorValid(Ore)) {
-                    if (Ore->IAmAlive) {
-                        bShouldDraw = true;
-                        // if (ActorHandler::IsActorA(Ore, L"/Game/Gameplay/Skills/Mining/BP_ValeriaGatherableLoot_Mining_MultiHarvest.BP_ValeriaGatherableLoot_Mining_MultiHarvest")) {
-                        //     auto OreMulti = static_cast<ABP_ValeriaGatherableLoot_Mining_MultiHarvest_C*>(Ore);
-                        //     if (OreMulti->DespawnTimestamp > 0  && OreMulti->ParticipationTracking) { // if it's not despawning we don't need to check if we've broken it
-                        //         if (UBlueprintGameplayTagLibrary::IsGameplayTagValid(OreMulti->PreviousCycleParticipationTag)) {
-                        //             bShouldDraw = !OreMulti->ParticipationTracking->IsParticipantForType(ValeriaCharacter, OreMulti->PreviousCycleParticipationTag);
-                        //         }
-                        //     }
-                        // }
-                        if (auto it = Configuration::OreColors.find(static_cast<EOreType>(Type)); it != Configuration::OreColors.end())
-                            Color = it->second;
-                        if (Type != static_cast<uint8_t>(EOreType::Clay)) {
-                            bOverlayText = true;
-                            OverlayText = GatherableSizeNames[Variant];
-                        }
-                    }
-                }
+            if (auto it = Configuration::OreColors.find(static_cast<FEntryMining::TypeEnum>(Entry->Type())); it != Configuration::OreColors.end())
+                Color = it->second;
+            if (Entry->Type() != static_cast<uint8_t>(FEntryMining::TypeEnum::Clay)) {
+                bOverlayText = true;
+                OverlayText = GatherableSizeNames[Entry->Variant()+1];
             }
             break;
         case EType::Players:
-            if (Singles[static_cast<int>(EOneOffs::Player)]) {
-				if (DisplayName.empty()) continue;
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::Player); it != Configuration::SingleColors.end())
-                    Color = it->second;
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::Player); it != Configuration::SingleColors.end())
+                Color = it->second;
             break;
         case EType::Animal:
-            if (Animals[Type][Variant]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::AnimalColors.find(FCreatureType(static_cast<ECreatureKind>(Type), static_cast<ECreatureQuality>(Variant))); it != Configuration::AnimalColors.end())
-                    Color = it->second;
-            }
+            if (auto it = Configuration::AnimalColors.find(FCreatureType(static_cast<FEntryHunting::TypeEnum>(Entry->Type()), static_cast<FEntryHunting::VariantEnum>(Entry->Variant()))); it != Configuration::AnimalColors.end())
+                Color = it->second;
             break;
         case EType::Tree:
-            if (Trees[Type][Variant]) {
-                auto Tree = static_cast<ABP_ValeriaGatherableLoot_C*>(Actor);
-                if (Tree && IsActorValid(Tree)) {
-                    if (Tree->IAmAlive) {
-                        bShouldDraw = true;
-                        if (auto it = Configuration::TreeColors.find(static_cast<ETreeType>(Type)); it != Configuration::TreeColors.end())
-                            Color = it->second;
-                        if (Type != static_cast<uint8_t>(ETreeType::Bush)) {
-                            bOverlayText = true;
-                            OverlayText = GatherableSizeNames[Variant];
-                        }
-                    }
-                }
+            if (auto it = Configuration::TreeColors.find(static_cast<FEntryLumber::TypeEnum>(Entry->Type())); it != Configuration::TreeColors.end())
+                Color = it->second;
+            if (Entry->Type() != static_cast<uint8_t>(FEntryLumber::TypeEnum::Bush)) {
+                bOverlayText = true;
+                OverlayText = GatherableSizeNames[Entry->Variant()];
             }
             break;
         case EType::Bug:
-            if (Bugs[Type][Variant][Quality]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::BugColors.find(FBugType(static_cast<EBugKind>(Type), static_cast<EBugQuality>(Variant))); it != Configuration::BugColors.end())
-                    Color = it->second;
-                if (Quality == 1) {
-                    bShouldDrawStar = true;
-                }
+            if (auto it = Configuration::BugColors.find(FBugType(static_cast<FEntryBug::TypeEnum>(Entry->Type()), static_cast<FEntryBug::VariantEnum>(Entry->Variant()))); it != Configuration::BugColors.end())
+                Color = it->second;
+            if (Entry->Quality() == 1) {
+                bShouldDrawStar = true;
             }
             break;
         case EType::NPCs:
-            if (Singles[static_cast<int>(EOneOffs::NPC)]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::NPC); it != Configuration::SingleColors.end())
-                    Color = it->second;
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::NPC); it != Configuration::SingleColors.end())
+                Color = it->second;
             break;
         case EType::Loot:
-            if (Singles[static_cast<int>(EOneOffs::Loot)]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::Loot); it != Configuration::SingleColors.end())
-                    Color = it->second;
-                bIconShouldUseColor = true;
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::Loot); it != Configuration::SingleColors.end())
+                Color = it->second;
+            bIconShouldUseColor = true;
             break;
         case EType::Quest:
-            if (Singles[static_cast<int>(EOneOffs::Quest)]) {
-                if (Distance > 250) continue; // quests don't always update collision until within this range
-                if (!Actor->bActorEnableCollision) {
-                    continue;
-                }
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::Quest); it != Configuration::SingleColors.end())
-                    Color = it->second;
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::Quest); it != Configuration::SingleColors.end())
+                Color = it->second;
             break;
         case EType::RummagePiles:
-            if (Singles[static_cast<int>(EOneOffs::RummagePiles)]) {
-                auto Pile = static_cast<ATimedLootPile*>(Actor);
-                if (!Pile || !IsActorValid(Pile)) {
-                    bShouldDraw = false;
-                    break;
-                }
-                
-                if (Singles[static_cast<int>(EOneOffs::Others)]) {
-                    bShouldDraw = true;
-                    Color = Pile->bActivated ? IM_COL32(0xFF, 0xFF, 0xFF, 0xFF) : IM_COL32(0xFF, 0x00, 0x00, 0xFF);
-                }
-                else if (Pile->CanGather(ValeriaCharacter) && Pile->bActivated) {
-                    bShouldDraw = true;
-                    if (auto it = Configuration::SingleColors.find(EOneOffs::RummagePiles); it != Configuration::SingleColors.end())
-                        Color = it->second;
-                }
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::RummagePiles); it != Configuration::SingleColors.end())
+                Color = it->second;
             break;
         case EType::Stables:
-            if (Singles[static_cast<int>(EOneOffs::Stables)]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::Stables); it != Configuration::SingleColors.end())
-                    Color = it->second;
-            }
-            break;
+            if (auto it = Configuration::SingleColors.find(EOneOffs::Stables); it != Configuration::SingleColors.end())
+                Color = it->second;
         case EType::Fish:
-            if (Singles[static_cast<int>(EOneOffs::FishHook)]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::FishHook); it != Configuration::SingleColors.end())
-                    Color = it->second;
-                bIconShouldUseColor = true;
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::FishHook); it != Configuration::SingleColors.end())
+                Color = it->second;
+            bIconShouldUseColor = true;
             break;
         case EType::Pool:
-            if (Singles[static_cast<int>(EOneOffs::FishPool)]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::FishPool); it != Configuration::SingleColors.end())
-                    Color = it->second;
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::FishPool); it != Configuration::SingleColors.end())
+                Color = it->second;
             break;
         case EType::Treasure:
-            if (Singles[static_cast<int>(EOneOffs::Treasure)]) {
-                if (Distance > 150) continue; // Chests don't seem to properly setup collision until in update range
-                if (!Actor->bActorEnableCollision) {
-                    continue;
-                }
-                
-                auto Treasure = static_cast<AWorldPersistGatherable*>(Actor);
-                if (!Treasure || !IsActorValid(Treasure)) break;
-                
-                if (Singles[static_cast<int>(EOneOffs::Others)]) {
-                    bShouldDraw = true;
-                    if (auto it = Configuration::SingleColors.find(EOneOffs::Treasure); it != Configuration::SingleColors.end())
-                        Color = it->second;
-                } else if (Treasure->CanGather(ValeriaCharacter)) {
-                    bShouldDraw = true;
-                    if (auto it = Configuration::SingleColors.find(EOneOffs::Treasure); it != Configuration::SingleColors.end())
-                        Color = it->second;
-                }
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::Treasure); it != Configuration::SingleColors.end())
+                Color = it->second;
             break;
         case EType::TimedDrop:
-            if (Singles[static_cast<int>(EOneOffs::TimedDrop)]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::TimedDrop); it != Configuration::SingleColors.end())
-                    Color = it->second;
-                if (Variant > 1) {
-                    bOverlayText = true;
-                    OverlayText = std::format("{}", Variant);
-                }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::TimedDrop); it != Configuration::SingleColors.end())
+                Color = it->second;
+            if (Entry->Variant() > 1) {
+                bOverlayText = true;
+                OverlayText = std::format("{}", Entry->Variant());
             }
             break;
         case EType::Relic:
-            if (Singles[static_cast<int>(EOneOffs::Relic)]) {
-                bShouldDraw = true;
-                if (auto it = Configuration::SingleColors.find(EOneOffs::Relic); it != Configuration::SingleColors.end())
-                    Color = it->second;
-            }
+            if (auto it = Configuration::SingleColors.find(EOneOffs::Relic); it != Configuration::SingleColors.end())
+                Color = it->second;
+            break;
+        case EType::Shops:
+            if (auto it = Configuration::SingleColors.find(EOneOffs::Decor); it != Configuration::SingleColors.end())
+                Color = it->second;
+            bIconShouldUseColor = true;
+            break;
+        case EType::Bubble:
+            if (auto it = Configuration::AnimalColors.find(FCreatureType{static_cast<FEntryHunting::TypeEnum>(Entry->Type()), static_cast<FEntryHunting::VariantEnum>(Entry->Variant())}); it != Configuration::AnimalColors.end())
+                Color = it->second;
             break;
         default:
             break;
         }
-
-        if (Singles[static_cast<int>(EOneOffs::Others)] && Type == 0)
-            bShouldDraw = true;
-
-        if (!bShouldDraw)
-            continue;
 
         FVector2D ScreenLocation;
         if (PlayerController->ProjectWorldLocationToScreen(ActorLocation, &ScreenLocation, true)) {
@@ -275,23 +180,23 @@ void HUDDetours::ReceiveDrawHUD(const UObject* Context, UFunction* Function, voi
             std::vector<std::wstring> IconText{};
             std::wstring IconAboveText;
 
-            if ((ActorType == EType::RummagePiles && Variant > 0) || ActorType == EType::Fish || ActorType == EType::Pool) {
-                IconText.push_back(DisplayName);
+            if ((Entry->ActorType() == EType::RummagePiles && Entry->Variant() > 0) || Entry->ActorType() == EType::Fish || Entry->ActorType() == EType::Pool) {
+                IconText.push_back(Entry->DisplayName);
             }
 
             if (Configuration::bEnableESPDistance) {
-                if (ActorType == EType::Players) {
-                    IconAboveText = std::format(L"{} [{:.0f}m]", DisplayName, Distance);;
+                if (Entry->ActorType() == EType::Players) {
+                    IconAboveText = std::format(L"{} [{:.0f}m]", Entry->DisplayName, Entry->Distance);
                 }
                 else {
-                    IconText.push_back(std::format(L"{:.0f}m", Distance));
+                    IconText.push_back(std::format(L"{:.0f}m", Entry->Distance));
                 }
             }
-            else if (ActorType == EType::Players) {
-                IconAboveText = DisplayName;
+            else if (Entry->ActorType() == EType::Players) {
+                IconAboveText = Entry->DisplayName;
             }
-            if (Configuration::bEnableESPDespawnTimer && Despawn > 0) {
-                IconText.push_back(std::format(L"{:.0f}s", Despawn));
+            if (Configuration::bEnableESPDespawnTimer && Entry->Despawn > 0) {
+                IconText.push_back(std::format(L"{:.0f}s", Entry->Despawn));
             }
 
             if (ScreenLocation.X - 32.0 < 0.0)
@@ -309,7 +214,7 @@ void HUDDetours::ReceiveDrawHUD(const UObject* Context, UFunction* Function, voi
             double ReferenceDistance = 100.0; // Distance at which no scaling is applied
             double ScalingFactor = 0.0; // Determines how much the scale changes with distance
             double DistanceScale;
-            DistanceScale = BaseScale - ScalingFactor * (Distance - ReferenceDistance);
+            DistanceScale = BaseScale - ScalingFactor * (Entry->Distance - ReferenceDistance);
             DistanceScale = CustomMath::Clamp(DistanceScale, 0.5, BaseScale); // Clamp the scale to a reasonable range
 
             const FVector2D TextScale = { DistanceScale * (double)Configuration::ESPTextScale, DistanceScale * (double)Configuration::ESPTextScale };
@@ -321,9 +226,9 @@ void HUDDetours::ReceiveDrawHUD(const UObject* Context, UFunction* Function, voi
             //ImColor IMCS(Color);
             //FLinearColor ShadowColor = { IMCS.Value.x, IMCS.Value.y, IMCS.Value.z, IMCS.Value.w };
             
-            if (!Texture.empty()) {
+            if (!Entry->TexturePath().empty()) {
                 UTexture2D* ActorTexture = nullptr;
-                ActorTexture = ActorHandler::TextureLookup(Texture);
+                ActorTexture = ActorHandler::TextureLookup(Entry->TexturePath());
                 if (!ActorTexture || !ActorTexture->IsValidLowLevel()) continue;
                 double ShadowXY = 36.0;
                 double IconXY = 32.0;
@@ -348,9 +253,26 @@ void HUDDetours::ReceiveDrawHUD(const UObject* Context, UFunction* Function, voi
                 HUD->Canvas->K2_DrawTexture(ActorTexture, IconLocation, IconSize, { 0.0,0.0 }, { 1.0, 1.0 }, IconColor, EBlendMode::BLEND_Translucent, 0.0f, { 0.5,0.5 });
                 if (bShouldDrawStar) {
                     if (auto StarTexture = static_cast<UTexture2D*>(LoadAssetPtrFromPath("/Game/UI/Assets_Shared/Icons/Icon_Special_01.Icon_Special_01")); StarTexture != nullptr) {
-                        FVector2D StarSize = { 16.0,16.0 };
+                        double StarXY = 16.0;
+                        double StarScale = max(TextureSize.X, TextureSize.Y) / StarXY / (double)Configuration::ESPTextScale;
+                        FVector2D StarSize ={ TextureSize.X / StarScale, TextureSize.Y / StarScale};
                         FVector2D StarLocation = { ScreenLocation.X - IconSize.X / 2.0 - StarSize.X / 2.0, ScreenLocation.Y + IconSize.Y / 2.0 - StarSize.Y / 2.0 };
                         HUD->Canvas->K2_DrawTexture(StarTexture, StarLocation, StarSize, { 0.0,0.0 }, { 1.0, 1.0 }, { 1.0f,0.9f,0.0f,1.0f }, EBlendMode::BLEND_Translucent, 0.0f, { 0.5,0.5 });
+                    }
+                }
+                if (Entry->Infected()) {
+                    if (auto InfectedTexture = static_cast<UTexture2D*>(LoadAssetPtrFromPath("/Game/UI/Assets_Shared/Icons/WT_Icon_SparkleSingle_Glow.WT_Icon_SparkleSingle_Glow")); InfectedTexture != nullptr) {
+                        double InfectedXY = 16.0;
+
+                        double SInfectedScale = max(TextureSize.X, TextureSize.Y) / (InfectedXY + 4.0) / (double)Configuration::ESPTextScale;
+                        FVector2D SInfectedSize ={ TextureSize.X / SInfectedScale, TextureSize.Y / SInfectedScale};
+                        FVector2D SInfectedLocation = { ScreenLocation.X + IconSize.X / 2.0 - SInfectedSize.X / 2.0, ScreenLocation.Y + IconSize.Y / 2.0 - SInfectedSize.Y / 2.0 };
+                        HUD->Canvas->K2_DrawTexture(InfectedTexture, SInfectedLocation, SInfectedSize, { 0.0,0.0 }, { 1.0, 1.0 }, { 0.02f,0.02f,0.207f,1.0f }, EBlendMode::BLEND_Translucent, 0.0f, { 0.5,0.5 });
+
+                        double InfectedScale = max(TextureSize.X, TextureSize.Y) / InfectedXY / (double)Configuration::ESPTextScale;
+                        FVector2D InfectedSize ={ TextureSize.X / InfectedScale, TextureSize.Y / InfectedScale};
+                        FVector2D InfectedLocation = { ScreenLocation.X + IconSize.X / 2.0 - InfectedSize.X / 2.0, ScreenLocation.Y + IconSize.Y / 2.0 - InfectedSize.Y / 2.0 };
+                        HUD->Canvas->K2_DrawTexture(InfectedTexture, InfectedLocation, InfectedSize, { 0.0,0.0 }, { 1.0, 1.0 }, { 0.67f,0.37f,0.785f,1.0f }, EBlendMode::BLEND_Translucent, 0.0f, { 0.5,0.5 });
                     }
                 }
                 if (bOverlayText && !OverlayText.empty()) {

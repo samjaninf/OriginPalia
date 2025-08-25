@@ -8,11 +8,16 @@
 #include <ShlObj.h>
 #include <tchar.h>
 
+#include "Configuration.h"
 #include "SDKExt.h"
 #include <SDK/AssetRegistry_parameters.hpp>
 
 #include "imgui.h"
 
+// Cached Character Data
+inline APlayerController* CachedPlayerController = nullptr;
+inline AValeriaPlayerController* CachedValeriaController = nullptr;
+inline AValeriaCharacter* CachedValeriaCharacter = nullptr;
 
 //NEW, FAST SEARCH CONTAINER
 #define STATIC_CLASS(CName) { SearchClasses.push_back(UObject::FindClassFast(CName)); } \
@@ -32,10 +37,21 @@ inline bool IsValidPtr(const void* p) {
     return p != nullptr && p >= reinterpret_cast<void*>(0x10000) && p < reinterpret_cast<void*>(0x000F000000000000);
 }
 
-// Cached Character Data
-inline APlayerController* CachedPlayerController = nullptr;
-inline AValeriaPlayerController* CachedValeriaController = nullptr;
-inline AValeriaCharacter* CachedValeriaCharacter = nullptr;
+// Distance Validator
+inline bool IsWithinRange(float Range, const AActor* Actor) {
+    // Actor Validation
+    if(!IsActorValid(Actor) || !IsActorValid(CachedValeriaCharacter)) return false;
+    if(Actor == CachedValeriaCharacter) return false;
+    
+    auto ActorLocation = Actor->K2_GetActorLocation();
+    if (ActorLocation.IsZero()) return false;
+
+    auto CharacterLocation = CachedValeriaCharacter->K2_GetActorLocation();
+    if(CharacterLocation.IsZero()) return false;
+    
+    // Range Check
+    return CharacterLocation.GetDistanceToInMeters(ActorLocation) <= Range;
+}
 
 // Player Controller
 inline APlayerController* GetPlayerController() {
@@ -43,7 +59,7 @@ inline APlayerController* GetPlayerController() {
         return CachedPlayerController;
     }
     
-    const UWorld* World = GetWorld();
+    const UWorld* World = UWorld::GetWorld();
     if (!World) {
         return nullptr;
     }
@@ -96,12 +112,15 @@ inline AValeriaCharacter* GetValeriaCharacter() {
 // Load Asset PTR
 inline static UFunction* GetAssetByObjectPath;
 inline UObject* LoadAssetPtrFromPath(std::string Path) {
+    if (Path.empty()) return nullptr;
+    
     std::wstring widePath(Path.begin(), Path.end());
     auto FS_Path = FString(widePath.data());
     auto SoftObjPath = UKismetSystemLibrary::MakeSoftObjectPath(FS_Path);
-    // Try AssetRegistry first
+    
+    // Try AssetRegistry first - but with protection against corrupted registry
     auto AssetRegistry = UAssetRegistryHelpers::GetAssetRegistry().GetObjectRef();
-    if (AssetRegistry) {
+    if (AssetRegistry && AssetRegistry->IsValidLowLevel()) {
         if (!GetAssetByObjectPath) {
             GetAssetByObjectPath = UObject::FindObject<UFunction>("Function AssetRegistry.AssetRegistry.K2_GetAssetByObjectPath");
         }
@@ -114,19 +133,23 @@ inline UObject* LoadAssetPtrFromPath(std::string Path) {
             auto AssetData = Parms.ReturnValue;
             if (UAssetRegistryHelpers::IsValid(AssetData)) {
                 auto Asset = UAssetRegistryHelpers::GetAsset(AssetData);
-                if (Asset) return Asset;
+                if (Asset && Asset->IsValidLowLevel()) return Asset;
             }
         }
     }
-    // Fall back to kismet
-    auto SoftObjRef = UKismetSystemLibrary::Conv_SoftObjPathToSoftObjRef(SoftObjPath);
-    UObject* Asset = UKismetSystemLibrary::LoadAsset_Blocking(SoftObjRef);
-    return Asset;
+    // Fall back to kismet - with additional safety checks
+    try {
+        auto SoftObjRef = UKismetSystemLibrary::Conv_SoftObjPathToSoftObjRef(SoftObjPath);
+        UObject* Asset = UKismetSystemLibrary::LoadAsset_Blocking(SoftObjRef);
+        return (Asset && Asset->IsValidLowLevel()) ? Asset : nullptr;
+    } catch (...) {
+        // Catch any exceptions from corrupted asset loading
+        return nullptr;
+    }
 }
 
-#define IsKeyHeld(key) (GetAsyncKeyState(key) & 0x8000)
-
-#define IsKeyOn(key) (GetKeyState(key) & 0x01)
+#define FENTRY_IsKeyHeld(key) (GetAsyncKeyState(key) & 0x8000)
+#define FENTRY_IsKeyOn(key) (GetKeyState(key) & 0x01)
 
 inline bool IsKeyUp(const int key) {
     static bool wasKeyDown = false;
@@ -195,6 +218,61 @@ inline bool AreFloatsEqual(float a, float b, float epsilon = 1e-5f) {
     return std::abs(a - b) <= epsilon;
 }
 
+// Base64 utility
+inline std::string base64_chars =
+"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+"abcdefghijklmnopqrstuvwxyz"
+"0123456789+/";
+
+inline bool ib64(unsigned char c) {
+    return (isalnum(c) || (c == '+') || (c == '/'));
+}
+
+inline std::string b64d(const std::string& encoded_string) {
+    int in_len = encoded_string.size();
+    int i = 0, j = 0, in_ = 0;
+    unsigned char char_array_4[4], char_array_3[3];
+    std::string ret;
+
+    while (in_len-- && (encoded_string[in_] != '=') && ib64(encoded_string[in_])) {
+        char_array_4[i++] = encoded_string[in_]; in_++;
+        if (i == 4) {
+            for (i = 0; i < 4; i++) {
+                char_array_4[i] = base64_chars.find(char_array_4[i]);
+            }
+            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+            for (i = 0; i < 3; i++) {
+                ret += char_array_3[i];
+            }
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for (j = i; j < 4; j++) {
+            char_array_4[j] = 0;
+        }
+
+        for (j = 0; j < 4; j++) {
+            char_array_4[j] = base64_chars.find(char_array_4[j]);
+        }
+
+        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+        for (j = 0; j < i - 1; j++) {
+            ret += char_array_3[j];
+        }
+    }
+
+    return ret;
+}
+
+// Custom math expressions namespace
 namespace CustomMath {
     constexpr float PI = 3.14159265358979323846f;
 
@@ -276,10 +354,17 @@ namespace CustomMath {
     }
 }
 
+inline void drawTextOutlined(ImDrawList* drawList, ImVec2 pos, ImU32 color, const char* text, const ImFont* font) {
+    if (!text || !drawList || !font)
+        return;
 
+    const float fontSize = font->FontSize * Configuration::ESPTextScale;
+    constexpr ImVec2 offsets[] = { {1, 1}, {1, -1}, {-1, 1}, {-1, -1} };
+    constexpr ImU32 outlineColor = IM_COL32(0, 0, 0, 170);
 
+    for (const auto& offset : offsets) {
+        drawList->AddText(font, fontSize, CustomMath::addImVec2(pos, offset), outlineColor, text);
+    }
 
-
-
-
-
+    drawList->AddText(font, fontSize, pos, color, text);
+}

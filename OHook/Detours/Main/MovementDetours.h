@@ -2,6 +2,7 @@
 
 #include <SDK.hpp>
 #include <SDK/Palia_parameters.hpp>
+#include <chrono>
 
 class PaliaOverlay;
 
@@ -13,13 +14,18 @@ public:
 
 	static void SetupDetours(AValeriaCharacter* VC, AValeriaPlayerController* VPC);
 
+	static void Func_DoSpinbot(const UObject* Context, UFunction* Function, void* Parms);
 	static void Func_DoNoClip(const UObject* Context, UFunction* Function, void* Parms);
 	static void Func_DoPersistentMovement(const UObject* Context, UFunction* Function, void* Parms);
 	static void Func_SendMovement(const UObject* Context, UFunction* Function, void* Parms);
 
+	static std::chrono::steady_clock::time_point LastTickTime;
+
+	static float SpinSpeed;
 	static float SmoothingFactor;
 	
 	// Movement Booleans
+	static bool bEnableSpinbot;
 	static bool bEnableNoclip;
 	static bool bPreviousNoclipState;
 
@@ -43,9 +49,11 @@ public:
 	static float CustomGameSpeed;
 };
 
+inline float MovementDetours::SpinSpeed = 500.0f;
 inline float MovementDetours::SmoothingFactor = 90.0f;
 
 // Movement Booleans
+inline bool MovementDetours::bEnableSpinbot = false;
 inline bool MovementDetours::bEnableNoclip = false;
 inline bool MovementDetours::bPreviousNoclipState = false;
 
